@@ -50,6 +50,19 @@ test('ambiguity choices persist and the mobile workspace fits its viewport',asyn
   await page.screenshot({path:`${screenshots}/mobile.png`,fullPage:true});
 });
 
+test('an elaboration shows its earlier aspect and allows a reversible correction', async ({ page }) => {
+  await page.goto('/');
+  await ask(page, 'James Webb Space Telescope');
+  await ask(page, 'What about its mirror?');
+  await ask(page, 'Tell me more.');
+  await expect(page.getByText('History · turn 2', { exact: true })).toBeVisible();
+  await page.locator('button[title="Remove mirror inherited from turn 2"]').click();
+  await expect(page.locator('.preview-banner')).toContainText('Saved conversation unchanged');
+  await expect(page.getByText('History · turn 2', { exact: true })).toHaveCount(0);
+  await page.locator('button[title="Restore mirror"]').click();
+  await expect(page.getByText('History · turn 2', { exact: true })).toBeVisible();
+});
+
 test('two-subject comparison and measured experiments are accessible',async({page})=>{
   await page.goto('/');
   await page.getByRole('navigation',{name:'Workspace views'}).getByRole('button',{name:'Compare'}).click();

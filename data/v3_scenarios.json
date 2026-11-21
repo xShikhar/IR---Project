@@ -26,6 +26,17 @@
     "labelSource": "Synthetic behavior assertion"
   },
   {
+    "id": "aspect-elaboration",
+    "title": "Ask for detail about the mirror",
+    "description": "Ask about Webb's mirror, then inspect which earlier terms the next search uses.",
+    "turns": [
+      "James Webb Space Telescope",
+      "What about its mirror?",
+      "Tell me more."
+    ],
+    "labelSource": "Synthetic behavior assertion"
+  },
+  {
     "id": "feedback-undo",
     "title": "Preview and undo passage feedback",
     "description": "Pin a telescope passage, preview another search, then undo the pin.",

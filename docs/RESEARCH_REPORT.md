@@ -2,9 +2,11 @@
 
 **CSD358 Information Retrieval · Track T2 · Course project report**
 
+[TurnTrace 2 source code](https://github.com/xShikhar/IR---Project)
+
 ## Abstract
 
-Conversational passage retrieval must interpret short follow-ups, handle changes of topic, and make evidence available for scrutiny. TurnTrace 2 extends the midterm engine with resumable topic state, inspectable query weights, a configurable ranking ensemble, and corpus-backed clarification. A React workspace supports feedback, preview, and undo. On 40 TEST turns over 35,000 passages, nDCG@10 was 0.7255 for raw BM25, 0.6366 for the frozen midterm, 0.6978 for the new lexical hybrid, and 0.6997 for the full hybrid with local article embeddings. The two new configurations returned 14.75% and 16.00% unjudged results at rank 10, respectively. All three synthetic behavior cases passed. The comparison is exploratory, and the inherited AI-derived grades await human validation.
+Conversational passage retrieval must interpret short follow-ups, handle changes of topic, and make evidence available for scrutiny. TurnTrace 2 extends the midterm engine with resumable topic state, inspectable query weights, a configurable ranking ensemble, and corpus-backed clarification. A React workspace supports feedback, preview, and undo. On 40 TEST turns over 35,000 passages, nDCG@10 was 0.7255 for raw BM25, 0.6366 for the frozen midterm, 0.6978 for the new lexical hybrid, and 0.6984 for the full hybrid with local article embeddings. The two new configurations returned 14.75% and 16.00% unjudged results at rank 10, respectively. All four synthetic behavior cases passed. The comparison is exploratory, and the inherited AI-derived grades await human validation.
 
 ## 1. Introduction
 
@@ -60,7 +62,7 @@ React workspace
 
 The React client sends a raw query and session ID to the Node API. The workspace resolves a topic through signals in the new query and existing session topics. A topic stores entity and aspect terms, along with passage feedback. The user can also select an existing topic. Candidate interpretations come from article identities in the loaded corpus. The session records a turn after an ambiguity is resolved or the search can proceed. Preview and comparison operate on a copy of context so the user can inspect alternatives before committing a new turn.
 
-The search service weights each current term by 1.00 and each topic entity term by 0.85, adding contributions when sources overlap. Relevant passages can contribute up to eight expansion terms with weight 0.35 each. The lexical hybrid uses weighted BM25 and cosine, with a raw-query recovery channel when context contributes. The full hybrid also uses 384-dimensional article embeddings from the cached, quantized `Xenova/all-MiniLM-L6-v2` model. It compares the query embedding with 728 article vectors and projects article affinity to passage candidates. The response includes ranked passages, query-biased excerpts, score components, and term provenance.
+The search service weights each current term by 1.00 and each topic entity term by 0.85, adding contributions when sources overlap. Brief elaboration requests such as ?Tell me more? carry up to four aspect terms from the latest substantive turn in the active topic. Each carried term receives a weight of 0.40 and cites its source turn in the inspector. Users can remove those terms in a ranking preview. Relevant passages can contribute up to eight expansion terms with weight 0.35 each. The lexical hybrid uses weighted BM25 and cosine, with a raw-query recovery channel when context contributes. The full hybrid also uses 384-dimensional article embeddings from the cached, quantized `Xenova/all-MiniLM-L6-v2` model. It compares the query embedding with 728 article vectors and projects article affinity to passage candidates. The response includes ranked passages, query-biased excerpts, score components, and term provenance.
 
 ### Ranking functions
 
@@ -118,13 +120,13 @@ The default TEST figures come from `npm run eval:v3`, and the full hybrid figure
 | Raw BM25 | 0.8800 | 0.8525 | 0.7255 | 0.9625 | 0.4993 | 0.00% |
 | Midterm TurnTrace | 0.8950 | 0.8650 | 0.6366 | 0.9375 | 0.5106 | 0.50% |
 | TurnTrace 2 lexical hybrid | 0.8800 | 0.8125 | 0.6978 | 0.9800 | 0.5340 | 14.75% |
-| TurnTrace 2 full hybrid | 0.8750 | 0.8100 | 0.6997 | 0.9633 | 0.5365 | 16.00% |
+| TurnTrace 2 full hybrid | 0.8700 | 0.8100 | 0.6984 | 0.9633 | 0.5334 | 16.00% |
 
-Raw BM25 led the measured nDCG@10, and the midterm led P@10. The lexical hybrid had the highest MRR@20, while the full hybrid returned the greatest share of known relevant passages at depth 20. Adding the semantic channel changed nDCG@10 by +0.0019 relative to the lexical hybrid in this run. Raw BM25 had 0 unjudged hits out of 400 top-ten passages, the midterm had 2, the lexical hybrid had 59, and the full hybrid had 64. The coverage imbalance limits conclusions about relative relevance. The four-system run exported 83 distinct unjudged turn–passage pairs for review.
+Raw BM25 led the measured nDCG@10, and the midterm led P@10. The lexical hybrid had the highest MRR@20 and returned the greatest share of known relevant passages at depth 20. Adding the semantic channel changed nDCG@10 by +0.0006 relative to the lexical hybrid in this run. Raw BM25 had 0 unjudged hits out of 400 top-ten passages, the midterm had 2, the lexical hybrid had 59, and the full hybrid had 64. The coverage imbalance limits conclusions about relative relevance. The four-system run exported 83 distinct unjudged turn–passage pairs for review.
 
 **Turn-level analysis.** On the Library of Alexandria follow-up “Who founded it and when?” (`conv_08_turn_02`), the lexical hybrid kept the library topic and scored 0.7697 nDCG@10 versus 0.0000 for raw BM25 and 0.8430 for the midterm. On “What is the James Webb Space Telescope?” (`conv_03_turn_01`), the lexical hybrid scored 0.2942 versus 1.0000 for both baselines. Six of its first ten results lack judgments. This case shows how a ranking can preserve the intended topic and still score poorly on the available pool. [Per-turn rankings](../eval/output/v3/semantic/per_turn.csv)
 
-**Behavior evaluation.** All three synthetic cases passed in the lexical configuration. The telescope topic reused its original ID after the CRISPR turn. Mercury offered the element and planet choices and ranked the chosen element first. A pinned passage led the preview, preview preserved session state, and undo removed the pin. These checks provide evidence for the implemented interactions alongside the separate ranking measurements.
+**Behavior evaluation.** All four synthetic cases passed in the lexical configuration. The telescope topic reused its original ID after the CRISPR turn. Mercury offered the element and planet choices and ranked the chosen element first. A pinned passage led the preview, preview preserved session state, and undo removed the pin. In the elaboration case, inheriting the mirror aspect changed the BM25 ranking. Removing the term reproduced the ranking from the same configuration with aspect history disabled. This test establishes that the term affects scoring. It measures behavior on a designed scenario without providing a general estimate of retrieval gains. These checks provide evidence for the implemented interactions alongside the separate ranking measurements.
 
 ## 7. Limitations and next validation
 

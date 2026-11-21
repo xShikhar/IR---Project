@@ -43,15 +43,15 @@ function WeightTerms({ trace, exclusions, onTerm, disabled }) {
   const weights = retrieval.termWeights ?? [];
   const context = trace.context?.included ?? [];
   const terms = context.filter(entry => entry.role !== 'query').map(entry => typeof entry === 'string' ? { term: entry } : entry);
-  const inheritedWeights = weights.filter(entry => !entry.sources?.current && (entry.sources?.entity || entry.sources?.feedback));
-  const inherited = [...new Map([...terms, ...inheritedWeights].map(term => [term.term, term])).values()];
+  const inheritedWeights = weights.filter(entry => !entry.sources?.current && (entry.sources?.entity || entry.sources?.feedback || entry.sources?.history));
+  const inherited = [...new Map([...inheritedWeights, ...terms].map(term => [term.term, term])).values()];
   const effective = retrieval.effectiveTerms ?? [];
   return (
     <>
       {weights.length > 0 ? (
         <dl className="weight-list">
-          {weights.map(({ term, weight, sources }) => <div key={term}>
-            <dt><code>{term}</code>{sources?.entity > 0 && <small>Topic</small>}{sources?.feedback > 0 && <small>Feedback</small>}</dt>
+          {weights.map(({ term, weight, sources, historyTurn }) => <div key={term}>
+            <dt><code>{term}</code>{sources?.entity > 0 && <small>Topic</small>}{sources?.feedback > 0 && <small>Feedback</small>}{historyTurn && <small>History · turn {historyTurn.replace('turn_', '')}</small>}</dt>
             <dd>{numeric(weight, 2)}</dd>
           </div>)}
         </dl>
@@ -60,7 +60,7 @@ function WeightTerms({ trace, exclusions, onTerm, disabled }) {
         <h4>Inherited context</h4>
         <div className="term-chips">
           {inherited.filter(item => !exclusions.includes(item.term)).map(({ term, sourceTurn }) => (
-            <button type="button" key={term} title={sourceTurn ? `Remove ${term} from turn ${sourceTurn}` : `Remove ${term} from ranking preview`}
+            <button type="button" key={term} title={sourceTurn ? `Remove ${term} inherited from turn ${sourceTurn.replace('turn_', '')}` : `Remove ${term} from ranking preview`}
               disabled={disabled} onClick={() => onTerm(term)}><code>{term}</code><Icon name="close" size={13} /></button>
           ))}
           {exclusions.map(term => <button type="button" key={term} className="excluded" title={`Restore ${term}`} disabled={disabled}

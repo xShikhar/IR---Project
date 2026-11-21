@@ -50,6 +50,22 @@ const checks = {
     assert.deepEqual(workspace.snapshot(), pinnedSnapshot, 'Preview should leave session state intact');
     await workspace.undo();
     assert.deepEqual(activeTopic(workspace.snapshot(), expectedTopics[0]).feedback, topicBefore.feedback, 'Undo should restore the previous topic feedback');
+  },
+
+  async 'aspect-elaboration'(workspace, { turns }) {
+    await workspace.turn(turns[0]);
+    await workspace.turn(turns[1]);
+    const before = workspace.snapshot();
+    const model = 'bm25';
+    const inherited = await workspace.turn(turns[2], { model, preview: true });
+    const noHistory = await workspace.turn(turns[2], { model, preview: true, useAspectHistory: false });
+    const weight = inherited.trace.termWeights.find(entry => entry.term === 'mirror');
+    assert.equal(weight?.historyTurn, before.turns.at(-1).id, 'The mirror term should cite its original turn');
+    assert.ok(weight.sources.history > 0, 'The carried aspect should receive a ranking weight');
+    assert.notDeepEqual(inherited.results.map(entry => entry.docId), noHistory.results.map(entry => entry.docId), 'The weighted aspect should change the ranking');
+    const excluded = await workspace.turn(turns[2], { model, preview: true, excludedTerms: ['mirror'] });
+    assert.deepEqual(excluded.results.map(entry => entry.docId), noHistory.results.map(entry => entry.docId), 'Removing the inherited aspect should restore the comparison ranking');
+    assert.deepEqual(workspace.snapshot(), before, 'Neither preview nor correction should add a conversation turn');
   }
 };
 

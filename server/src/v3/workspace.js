@@ -5,6 +5,7 @@ const canonical = title => (title || '').replace(/\s+-\s+Section\s+\d+.*$/i, '')
 const normalize = value => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const generic = new Set(analyze('tell explain know describe information about please back return topic new more give overview mean meaning definition',true));
 const terms = value => [...new Set(analyze(value, true))].filter(t => !generic.has(t));
+const elaboration = /^(?:(?:please|can you|could you)\s+)*(?:why|how so|(?:tell me|explain|elaborate|expand|say|give me) (?:more|further)|elaborate|expand on that|what (?:does|did) (?:that|this) mean)[?.!\s]*$/i;
 
 /** A session owns its topic memory. Retrieval and previews receive detached copies. */
 export function createWorkspace(index, searchService, options = {}) {
@@ -133,12 +134,27 @@ export function createWorkspace(index, searchService, options = {}) {
     }
     const excluded=new Set((opts.excludedTerms||[]).flatMap(terms));
     const subjectTerms=new Set(topic.entityTerms);
+    const history = [];
+    if (opts.useAspectHistory !== false && elaboration.test(query)) {
+      const prior = state.turns.findLast(turn => turn.topicId === topic.id && turn.aspects?.length);
+      if (prior) {
+        for (const term of prior.aspects) {
+          if (!subjectTerms.has(term) && !excluded.has(term)) history.push({ term, sourceTurn: prior.id });
+          if (history.length === 4) break;
+        }
+      }
+    }
     topic.aspects=terms(query).filter(t=>!subjectTerms.has(t)&&!excluded.has(t));
-    const retrieved=await searchService.search(query,{...opts,topic:copy(topic),feedback:copy(topic.feedback),excludedTerms:[...excluded]});
+    const retrieved=await searchService.search(query,{...opts,topic:copy(topic),feedback:copy(topic.feedback),excludedTerms:[...excluded],history});
     topic.turnCount++;
     const turn={id:`turn_${state.turns.length+1}`,query,topicId:topic.id,topicTitle:topic.title,decision:action,createdAt:new Date().toISOString(),resultIds:retrieved.results.map(r=>r.docId),options:{model:opts.model||'hybrid',diversity:opts.diversity!==false,domain:opts.domain||null,excludedTerms:[...excluded],newTopic:Boolean(opts.newTopic),...(opts.interpretationId?{interpretationId:opts.interpretationId}: {})}};
+    turn.aspects = elaboration.test(query) ? [] : topic.aspects;
     state.turns.push(turn);
-    const included=(retrieved.trace?.termWeights||[]).map(t=>({term:t.term,weight:t.weight,role:t.sources?.current?'query':t.sources?.feedback?'feedback':'entity',sourceTurn:turn.id}));
+    const included=(retrieved.trace?.termWeights||[]).map(t=>({
+      term:t.term,weight:t.weight,
+      role:t.sources?.current?'query':t.sources?.history?'history':t.sources?.feedback?'feedback':'entity',
+      ...(t.historyTurn ? {sourceTurn:t.historyTurn} : {})
+    }));
     return {...retrieved,trace:{...retrieved.trace,architecture:'v3_branching_memory',decision:{action,reason,topicId:topic.id,topicTitle:topic.title,candidates:candidates.slice(0,4).map(c=>({title:c.title,score:c.score}))},context:{included,excluded:[...excluded],subject:topic.title,aspects:topic.aspects},timings:{...retrieved.trace?.timings,totalMs:Number((performance.now()-started).toFixed(2))}},session:{...copy(state),canUndo:true},clarification:null};
   }
 

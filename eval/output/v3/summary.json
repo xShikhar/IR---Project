@@ -75,8 +75,8 @@
   ],
   "behavior": {
     "provenance": "Synthetic behavior assertions",
-    "passed": 3,
-    "total": 3,
+    "passed": 4,
+    "total": 4,
     "cases": [
       {
         "id": "topic-return",
@@ -86,6 +86,11 @@
       {
         "id": "mercury-choice",
         "title": "Choose an interpretation of Mercury",
+        "passed": true
+      },
+      {
+        "id": "aspect-elaboration",
+        "title": "Ask for detail about the mirror",
         "passed": true
       },
       {

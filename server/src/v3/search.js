@@ -12,19 +12,24 @@ function documentTerms(doc) {
   return analyze(`${doc.title} ${doc.body}`);
 }
 
-function termWeights(index, current, entity, exemplars, excluded) {
+function termWeights(index, current, entity, exemplars, excluded, history = []) {
   const weights = new Map();
   function add(terms, source, weight) {
     for (const term of terms) {
       if (!Object.hasOwn(index.dictionary, term) || (source !== 'current' && excluded.has(term))) continue;
       if (!weights.has(term)) weights.set(term, { term, weight: 0, sources: { current: 0, entity: 0, feedback: 0 } });
       const entry = weights.get(term);
-      entry.sources[source] += weight;
+      entry.sources[source] = (entry.sources[source] ?? 0) + weight;
       entry.weight += weight;
     }
   }
   add(new Set(current), 'current', 1);
   add(new Set(entity), 'entity', 0.85);
+  for (const { term, sourceTurn } of history) {
+    if (excluded.has(term) || !Object.hasOwn(index.dictionary, term) || weights.has(term)) continue;
+    add([term], 'history', 0.4);
+    weights.get(term).historyTurn = sourceTurn;
+  }
 
   const salience = new Map();
   for (const doc of exemplars) {
@@ -221,7 +226,7 @@ export function createSearchService(index, { semantic = true, semanticCacheDir }
     async search(query, options = {}) {
       const {
         model = 'hybrid', topK = CONFIG.retrieval.topK, topic, feedback = {},
-        excludedTerms = [], excludedPhrases = [], diversity = false, domain = null,
+        excludedTerms = [], excludedPhrases = [], diversity = false, domain = null, history = [],
       } = options;
       if (typeof query !== 'string') throw new TypeError('query must be a string');
       if (!MODELS.has(model)) throw new RangeError('Unknown retrieval model');
@@ -235,9 +240,9 @@ export function createSearchService(index, { semantic = true, semanticCacheDir }
       const current = analyze(query);
       const entityText = (topic?.entityTerms ?? []).join(' ');
       const entity = analyze(entityText).filter(term => !excluded.has(term));
-      const weighted = termWeights(index, current, entity, relevant.map(id => index.docs[id]), excluded);
+      const weighted = termWeights(index, current, entity, relevant.map(id => index.docs[id]), excluded, history);
       const raw = termWeights(index, current, [], [], excluded);
-      const hasContext = [...weighted.values()].some(item => item.sources.entity || item.sources.feedback);
+      const hasContext = [...weighted.values()].some(item => item.sources.entity || item.sources.feedback || item.sources.history);
       const limit = Math.max(hasContext && !current.some(term => entity.includes(term)) ? 60 : 40, topK * 4);
       const channels = [];
       const lexicalModel = model === 'cosine' ? 'cosine' : 'bm25';

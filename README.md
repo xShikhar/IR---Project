@@ -8,6 +8,8 @@ Built on [the TurnTrace midterm](https://github.com/xShikhar/IR---MidTerm-Assign
 
 Requires Node **22.12+** (tested on 24), about 1 GB disk and 2 GB RAM. The submission includes the frozen corpus/index and prepared semantic cache.
 
+For a GitHub checkout, obtain `corpus.json` and `index.json` from the [course dataset folder](https://drive.google.com/drive/folders/1v6gZbclgtuP-jE0E5L60N5V7Aucx-5RY?usp=drive_link) or a verified midterm checkout and place both files in `data/`. Run `npm run prepare:semantic` after installing dependencies to enable local semantic search.
+
 ```sh
 npm ci
 npm run verify:data
@@ -48,7 +50,7 @@ Original `/api/chat` and midterm modules remain intact; new behavior lives in `s
 3. Ask **Back to JWST, what instruments does it carry?** The telescope branch resumes.
 4. Start a topic and ask **Mercury**. Choose **Mercury (element)**, then follow up.
 5. Mark evidence relevant, reject a result, or pin a passage. Re-score and undo.
-6. Inspect term weights, remove context, and compare midterm/final rankings.
+6. Ask about Webb's mirror, then ask **Tell me more.** In **Query terms**, inspect the inherited mirror term and its source turn. Remove and restore it to preview the ranking with and without that context.
 7. Use **Compare / Two subjects** for separate JWST and Hubble evidence.
 8. Open **Experiments** for measured metrics and judgment coverage.
 
@@ -87,13 +89,13 @@ npm run report
 npm run package:submission
 ```
 
-Browser checks use Playwright and installed Microsoft Edge (or Playwright Chromium). PDF generation requires Python; install its dependencies with `python -m pip install -r requirements-report.txt`. The ZIP includes source, corpus/index, semantic cache, built client, experiments and report. Set the submission name with:
+Browser checks use installed Microsoft Edge by default on Windows and Playwright Chromium elsewhere. To use Chromium on Windows, run `npx playwright install chromium --only-shell` and set `TURNTRACE_BROWSER_CHANNEL=chromium` before running the checks. PDF generation requires Python. Install its dependencies with `python -m pip install -r requirements-report.txt`. The ZIP includes source, corpus/index, semantic cache, built client, experiments and report. Set the submission name with:
 
 ```sh
 npm run package:submission -- --name=CSD358_Member1_Member2_Member3
 ```
 
-Review member names and the final repository link before uploading. No new external repository was published. Sessions are isolated in server memory, expire after six hours of inactivity, and can be exported; server restarts clear history.
+Review the member names before uploading. The report links to the final project repository. Sessions are isolated in server memory, expire after six hours of inactivity, and can be exported; server restarts clear history.
 
 ## Source layout
 
