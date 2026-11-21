@@ -258,7 +258,7 @@ function CustomFocusForm({ term, disabled, onSubmit }) {
   </details>;
 }
 
-export function TurnResults({ turns, turn, response, preview, pending, clarification, topic, busy, onTurn, onInterpret, onCancelClarification, onCustomFocus, onPreview, onQuestionOnly, onRestore, onFeedback, onInspect, onCompare, onTrace }) {
+export function TurnResults({ turns, turn, response, preview, pending, clarification, topic, busy, onTurn, onInterpret, onCancelClarification, onCustomFocus, onPreview, onQuestionOnly, onRestore, onFeedback, onInspect, onCompare, onTrace,feedbackDisabled=false }) {
   const results = response?.results;
   const query = pending || clarification?.query || turn?.query;
   const previewActive = Boolean(preview);
@@ -302,7 +302,7 @@ export function TurnResults({ turns, turn, response, preview, pending, clarifica
               onClick={() => onInterpret('all-interpretations')}>{clarification.data.senseQuery ? 'Search as written' : 'Search all interpretations'}</button>}
             {clarification.data.senseQuery && <CustomFocusForm key={clarification.data.senseQuery}
               term={clarification.data.senseQuery} disabled={busy} onSubmit={onCustomFocus} />}
-            <button className="text-button cancel-clarification" type="button" onClick={onCancelClarification}>Cancel clarification</button>
+            {onCancelClarification&&<button className="text-button cancel-clarification" type="button" onClick={onCancelClarification}>Cancel clarification</button>}
           </div>
         </section>
       )}
@@ -326,7 +326,7 @@ export function TurnResults({ turns, turn, response, preview, pending, clarifica
               <p>{response.trace.subjectLock.reason}</p>
             </div>
           </div>}
-          {results && results.map((doc, index) => <EvidenceCard key={doc.docId} doc={doc} index={index} feedback={topic?.feedback} busy={busy} onFeedback={onFeedback} onInspect={onInspect} />)}
+          {results && results.map((doc, index) => <EvidenceCard key={doc.docId} doc={doc} index={index} feedback={topic?.feedback} busy={busy||feedbackDisabled} onFeedback={onFeedback} onInspect={onInspect} />)}
           {results?.length === 0 && <Empty icon="file" title="No matching passages"><p>Try more specific terms, or remove the domain filter and re-score.</p></Empty>}
           {!results && <Empty icon="layers" title="Ranking preview available">
             <p>Retrieve evidence for this question using the saved turn.</p>

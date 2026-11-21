@@ -80,13 +80,13 @@ function RelevanceSummary({ relevance }) {
   </section>;
 }
 
-export function CompareView({ preset, comparison, busy, onCompare, loadBenchmarks }) {
-  const [mode, setMode] = useState('ranking');
+export function CompareView({ preset, comparison, busy, onCompare, loadBenchmarks,initialMode='ranking' }) {
+  const [mode, setMode] = useState(initialMode);
   const [query, setQuery] = useState(preset ?? '');
-  const [first, setFirst] = useState('');
-  const [second, setSecond] = useState('');
-  const [benchmarkId, setBenchmarkId] = useState('');
-  const [benchmarkRerank, setBenchmarkRerank] = useState('off');
+  const [first, setFirst] = useState(comparison?.subjects?.[0]?.subject??'');
+  const [second, setSecond] = useState(comparison?.subjects?.[1]?.subject??'');
+  const [benchmarkId, setBenchmarkId] = useState(comparison?.replay?.benchmarkId??'');
+  const [benchmarkRerank, setBenchmarkRerank] = useState(comparison?.replay?.rerank??'off');
   const [benchmarks, setBenchmarks] = useState(null);
   const [benchmarkError, setBenchmarkError] = useState('');
   const [customMidterm, setCustomMidterm] = useState(false);

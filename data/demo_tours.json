@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "tours": [
+    {
+      "id": "conversation-basics", "title": "A conversation that remembers", "category": "Conversation", "level": "Start here", "minutes": 2,
+      "summary": "Start with a complete question, use a pronoun, then ask for more without repeating the subject.",
+      "features": ["Conversational search", "Aspect memory", "Term provenance"],
+      "presenterNote": "Explain the difference between the persistent subject and the changing aspect. The trace shows where each inherited word came from.",
+      "steps": [
+        {"title":"Establish the subject","action":"search","query":"What is the James Webb Space Telescope?","observe":"The workspace creates a telescope topic and retrieves real Wikipedia passages.","expect":{"topic":"James Webb Space Telescope","results":true}},
+        {"title":"Ask a contextual follow-up","action":"search","query":"What about its primary mirror?","observe":"The telescope stays active while the focus changes to its mirror.","expect":{"topic":"James Webb Space Telescope","results":true}},
+        {"title":"Use an elliptical request","action":"search","query":"Tell me more.","traceTab":"rewrite","observe":"Open Query terms: the earlier mirror aspect is carried with its source turn.","expect":{"history":true,"results":true}}
+      ]
+    },
+    {
+      "id":"topic-return","title":"Switch topics. Return without mixing them.","category":"Conversation","level":"Core novelty","minutes":2,
+      "summary":"Move from space exploration to gene editing, then resume the original conversation.",
+      "features":["Branching memory","Automatic topic routing","Topic resumption"],
+      "presenterNote":"Point to the two topic branches. Returning should reuse the original branch, not create a third one or carry CRISPR into telescope search.",
+      "steps":[
+        {"title":"Start with the telescope","action":"search","query":"James Webb Space Telescope","observe":"A telescope branch appears.","expect":{"topic":"James Webb Space Telescope"}},
+        {"title":"Continue that branch","action":"search","query":"Where is its orbit located?","observe":"The pronoun resolves using the active telescope topic.","expect":{"topic":"James Webb Space Telescope"}},
+        {"title":"Introduce a different subject","action":"search","query":"Explain CRISPR gene editing.","observe":"CRISPR becomes a separate branch; telescope memory remains available.","expect":{"topic":"CRISPR","topics":2}},
+        {"title":"Resume the first topic","action":"search","query":"Back to JWST, what instruments does it carry?","observe":"The decision reads Resume topic and the original telescope branch becomes active.","expect":{"topic":"James Webb Space Telescope","decision":"RESUME","topics":2}}
+      ]
+    },
+    {
+      "id":"mercury-senses","title":"One word, two meanings","category":"Clarification","level":"Core novelty","minutes":2,
+      "summary":"Resolve Mercury into a specific indexed meaning and preserve that choice in follow-ups.",
+      "features":["Interactive disambiguation","Article identity","Persistent interpretation"],
+      "presenterNote":"The interpretation choices come from the corpus. Selecting the element supplies additional user information; this is not an automatic fact-checking verdict.",
+      "steps":[
+        {"title":"Ask an ambiguous question","action":"search","query":"Tell me about Mercury","observe":"The system offers the planet and chemical element instead of committing a guess.","expect":{"clarification":true}},
+        {"title":"Choose the chemical element","action":"clarify","choice":"Mercury (element)","observe":"The selected interpretation becomes the topic and changes the retrieved evidence.","expect":{"topic":"Mercury (element)","results":true}},
+        {"title":"Follow the selected meaning","action":"search","query":"How does it affect the nervous system?","observe":"The element interpretation persists and the returned passages discuss mercury exposure.","expect":{"topic":"Mercury (element)","results":true}}
+      ]
+    },
+    {
+      "id":"context-controls","title":"Inspect and challenge the memory","category":"Explainability","level":"Core novelty","minutes":3,
+      "summary":"Trace an earlier aspect, measure context sensitivity, and preview its removal without adding a turn.",
+      "features":["History provenance","Context audit","Immutable previews"],
+      "presenterNote":"Context impact measures ranking sensitivity, not relevance improvement. The saved conversation must keep the same number of turns during previews.",
+      "steps":[
+        {"title":"Establish a topic","action":"search","query":"James Webb Space Telescope","observe":"The telescope subject is established.","expect":{"results":true}},
+        {"title":"Introduce a specific aspect","action":"search","query":"What about its mirror?","observe":"Mirror becomes the current aspect.","expect":{"results":true}},
+        {"title":"Carry that aspect forward","action":"search","query":"Tell me more.","traceTab":"rewrite","observe":"The trace includes an earlier aspect and its source turn.","expect":{"history":true}},
+        {"title":"Compare context variants","action":"audit","traceTab":"rewrite","observe":"Check context impact compares topic, earlier-aspect, and feedback removal using the same saved question.","expect":{"variants":3}},
+        {"title":"Preview without the earlier aspect","action":"preview","options":{"contextVariant":"without-history"},"traceTab":"rewrite","observe":"The ranking is recomputed without earlier aspect terms; the three saved turns remain unchanged.","expect":{"preview":true,"noHistory":true}},
+        {"title":"Restore the original context","action":"preview","options":{},"traceTab":"rewrite","observe":"The earlier mirror aspect returns in the preview.","expect":{"preview":true,"history":true}}
+      ]
+    },
+    {
+      "id":"feedback-undo","title":"Teach the search, then undo","category":"Interaction","level":"Core novelty","minutes":3,
+      "summary":"Pin evidence, add relevance feedback, reject a result, and reverse the correction.",
+      "features":["Topic-scoped feedback","Pinned evidence","Exclusion","Undo"],
+      "presenterNote":"Feedback belongs to this topic. Pinning is an explicit user priority, not evidence that the passage is objectively relevant.",
+      "steps":[
+        {"title":"Find candidate evidence","action":"search","query":"James Webb Space Telescope instruments","observe":"A ranked list provides evidence to annotate.","expect":{"results":true}},
+        {"title":"Pin a lower-ranked passage","action":"feedback","annotation":"pin","resultIndex":3,"observe":"The selected passage moves to the top of a current-feedback preview.","expect":{"pinned":true,"preview":true}},
+        {"title":"Mark the pinned evidence relevant","action":"feedback","annotation":"relevant","usePinned":true,"observe":"The topic now contains separate pin and relevance annotations.","expect":{"relevant":true,"pinned":true}},
+        {"title":"Reject another passage","action":"feedback","annotation":"irrelevant","resultIndex":2,"observe":"The rejected passage disappears from this topic's ranking preview.","expect":{"hidden":true,"preview":true}},
+        {"title":"Undo the rejection","action":"undo","observe":"The exclusion is reversed while the earlier pin and relevance annotation remain.","expect":{"pinned":true,"relevant":true,"notHidden":true}}
+      ]
+    },
+    {
+      "id":"retrieval-methods","title":"Open the IR engine","category":"Retrieval","level":"Technical demo","minutes":3,"requires":["semantic"],
+      "summary":"Demonstrate positional phrase matching, four retrieval methods, postings, fusion, and profiling.",
+      "features":["Phrase search","BM25","SMART cosine","Semantic search","RRF","Profiler"],
+      "presenterNote":"Rankings and model scores have different scales. The method comparison shows actual top-five overlap; it does not claim one method always wins.",
+      "steps":[
+        {"title":"Run a quoted phrase","action":"search","query":"\"James Webb Space Telescope\"","traceTab":"rewrite","observe":"Positional intersection reports matching passages for the quoted phrase.","expect":{"phrase":true,"results":true}},
+        {"title":"Compare retrieval methods","action":"methods","traceTab":"postings","observe":"The inspector replays the same question through BM25, SMART cosine, semantic search, and Hybrid.","expect":{"methods":4}},
+        {"title":"Inspect novelty and timing","action":"inspect","traceTab":"novelty","observe":"Point out new versus repeated passages, distinct articles, and the real latency breakdown.","expect":{"profiler":true}}
+      ]
+    },
+    {
+      "id":"retrieval-controls","title":"Control focus and diversity","category":"Retrieval","level":"Technical demo","minutes":3,
+      "summary":"Switch between soft topic preference, a hard title constraint, domain filtering, and diverse discovery.",
+      "features":["Soft boost","Hard lock","Scarcity fallback","Domain filter","MMR diversity"],
+      "presenterNote":"Hard lock may fall back when fewer than ten candidates remain; the inspector reports the applied rule. Diversity trades redundancy against relevance.",
+      "steps":[
+        {"title":"Establish telescope context","action":"search","query":"James Webb Space Telescope","observe":"Begin with an unrestricted, softly focused retrieval.","expect":{"results":true}},
+        {"title":"Apply the hard topic lock","action":"preview","options":{"topicLock":"hard"},"traceTab":"state","observe":"Inspect the eligible candidate count and whether the lock or its documented fallback was applied.","expect":{"preview":true,"lock":"hard"}},
+        {"title":"Apply a domain filter","action":"preview","options":{"topicLock":"soft","domain":"space_physics"},"observe":"Every returned passage comes from Space and Physics.","expect":{"preview":true,"domain":"space_physics"}},
+        {"title":"Explore varied evidence","action":"preview","options":{"topicLock":"soft","domain":null,"diversity":true},"traceTab":"novelty","observe":"The domain restriction is cleared and MMR changes the relevance/redundancy balance.","expect":{"preview":true,"diversity":true}}
+      ]
+    },
+    {
+      "id":"neural-reranking","title":"Spend neural effort where it matters","category":"Retrieval","level":"Advanced demo","minutes":3,"requires":["reranker","semantic"],
+      "summary":"Compare first-stage retrieval with fixed and adaptive cross-encoder reranking.",
+      "features":["Local cross-encoder","Fixed depth","Adaptive depth","Per-passage logits"],
+      "presenterNote":"The cross-encoder scores claim/query and passage pairs locally. Adaptive depth is based on retrieval agreement; show the actual scored count rather than promising a speedup.",
+      "steps":[
+        {"title":"Retrieve without a second stage","action":"search","query":"What instruments does the James Webb Space Telescope carry?","options":{"rerank":"off"},"observe":"First-stage hybrid retrieval produces the initial evidence order.","expect":{"results":true}},
+        {"title":"Run fixed-depth reranking","action":"preview","options":{"rerank":"fixed"},"traceTab":"postings","observe":"The trace shows how many candidates were scored and the local model timing.","expect":{"preview":true,"rerank":"fixed"}},
+        {"title":"Run adaptive reranking","action":"preview","options":{"rerank":"adaptive"},"traceTab":"postings","observe":"Inspect the chosen depth and a result's original rank and cross-encoder logit.","expect":{"preview":true,"rerank":"adaptive"}}
+      ]
+    },
+    {
+      "id":"comparison-workspace","title":"Make the improvements visible","category":"Comparison","level":"Demo highlight","minutes":3,
+      "summary":"Inspect midterm versus final rankings, then retrieve separate evidence for two subjects.",
+      "features":["Midterm replay","Same-state comparison","Two-subject evidence"],
+      "presenterNote":"Compare ranking changes and source passages. Two-subject evidence is retrieved independently; it is not an automatically verified comparison answer.",
+      "steps":[
+        {"title":"Establish the subject","action":"search","query":"James Webb Space Telescope","observe":"Create context for the comparison.","expect":{"results":true}},
+        {"title":"Save a contextual follow-up","action":"search","query":"What instruments does it carry?","observe":"The saved follow-up depends on the earlier telescope question.","expect":{"results":true}},
+        {"title":"Compare midterm and final","action":"compare","observe":"Both engines receive the same earlier questions; inspect their passages and rank changes.","expect":{"comparison":true,"preview":true,"earlierContext":true}},
+        {"title":"Compare evidence for two telescopes","action":"subjects","query":"infrared instruments","subjects":["James Webb Space Telescope","Hubble Space Telescope"],"observe":"Read separate evidence columns for JWST and Hubble.","expect":{"subjects":2,"preview":true}}
+      ]
+    },
+    {
+      "id":"evaluation-evidence","title":"Show measured results honestly","category":"Comparison","level":"Viva preparation","minutes":2,
+      "summary":"Replay a graded benchmark question and explain evaluation coverage and limitations.",
+      "features":["Benchmark relevance","Judgment coverage","Ablations","Measured metrics"],
+      "presenterNote":"The inherited judgments are AI-derived, new results may be unjudged, and TEST was inspected during debugging. Synthetic checks and retrieval effectiveness answer different questions.",
+      "steps":[
+        {"title":"Replay a graded conversation","action":"benchmark","benchmarkId":"conv_08_turn_02","observe":"Read the same benchmark question and earlier context in both engines, with known grades and unjudged coverage.","expect":{"benchmark":true,"preview":true}},
+        {"title":"Open the measured experiments","action":"evaluation","observe":"Inspect actual metrics, ablations, behavioral checks, and the blind review pool. Explain what remains unvalidated.","expect":{"evaluation":true}}
+      ]
+    },
+    {
+      "id":"custom-meanings","title":"Explore a word inside any question","category":"Clarification","level":"Advanced interaction","minutes":2,
+      "summary":"Explore a term separately from the question, choose an indexed interpretation, and supply a custom focus.",
+      "features":["Explore meanings","Term-specific clarification","Custom focus"],
+      "presenterNote":"The explored word need not appear in the question. A custom focus is explicitly user-supplied retrieval context, not an automatically verified entity or fact.",
+      "steps":[
+        {"title":"Explore a term for a separate question","action":"search","query":"How does it change voltage?","options":{"senseQuery":"Transformer"},"observe":"Explore Transformer while preserving the original voltage question. The corpus offers electrical and neural interpretations.","expect":{"clarification":true}},
+        {"title":"Choose the electrical article","action":"clarify","choice":"Transformer","observe":"The original question is searched using the selected indexed subject.","expect":{"topic":"Transformer","results":true}},
+        {"title":"Provide a custom focus","action":"search","query":"How does it change voltage?","options":{"senseQuery":"Transformer","customSense":{"title":"Electrical transformer focus","keywords":"electrical transformer voltage induction"}},"observe":"The user-defined label and keywords become visible retrieval context with real source passages.","expect":{"topic":"Electrical transformer focus","results":true}}
+      ]
+    }
+  ]
+}

@@ -65,3 +65,9 @@ eval/output/*.svg
 playwright-report/
 test-results/
 .puppeteer/
+
+# Local preparation documents; publish PROJECT_STUDY_GUIDE.md instead
+docs/DEMO_VIDEO_SCRIPT.*
+docs/VIVA_HANDBOOK.*
+docs/RESEARCH_REPORT.md
+output/pdf/*.pdf

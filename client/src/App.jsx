@@ -4,9 +4,12 @@ import WorkspaceInspector from './components/WorkspaceInspector.jsx';
 import { CompareView, ExperimentsView } from './components/ResearchViews.jsx';
 import { exportSession, getHealth, getResource, getSessionId, postAction, resetSession } from './workspaceApi.js';
 import { Icon, Status } from './ui.jsx';
+import {DemoLab,DemoGuide} from './components/DemoLab.jsx';
+import {executeDemoStep,makeConversationTour} from './demo/demoRunner.js';
 
 const tabs = [
   { id: 'search', title: 'Search', icon: 'search' },
+  { id: 'demos', title: 'Demo lab', icon: 'bolt' },
   { id: 'compare', title: 'Compare', icon: 'compare' },
   { id: 'experiments', title: 'Experiments', icon: 'chart' },
 ];
@@ -92,7 +95,7 @@ function ResetDialog({ onClose, onReset }) {
 }
 
 export default function App() {
-  const [sessionId] = useState(getSessionId);
+  const [sessionId,setSessionId] = useState(getSessionId);
   const [session, setSession] = useState(null);
   const [health, setHealth] = useState(null);
   const [connecting, setConnecting] = useState(true);
@@ -123,21 +126,30 @@ export default function App() {
   const [evaluation, setEvaluation] = useState(null);
   const [evaluationError, setEvaluationError] = useState('');
   const [confirmReset, setConfirmReset] = useState(false);
+  const [demoCatalog,setDemoCatalog]=useState(null);
+  const [demoCatalogError,setDemoCatalogError]=useState('');
+  const [demoLoading,setDemoLoading]=useState(false);
+  const [activeDemo,setActiveDemo]=useState(null);
+  const [demoComparisonMode,setDemoComparisonMode]=useState('ranking');
+  const returnWorkspace=useRef(null);
+  const installedSession=useRef(null);
+  const restoringSettings=useRef(null);
   const inputRef = useRef(null);
   const scrollRef = useRef(null);
   const operation = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
+    if(installedSession.current===sessionId){installedSession.current=null;setConnecting(false);return ()=>controller.abort();}
     setConnecting(true);
     setBootError('');
-    getResource('session', sessionId, controller.signal)
+    const sessionRequest=getResource('session', sessionId, controller.signal)
       .then(data => { if (!controller.signal.aborted) setSession(snapshot(data)); })
       .catch(err => { if (!controller.signal.aborted) setBootError(`Could not connect to the workspace. ${err.message}`); });
-    getHealth(controller.signal)
+    const healthRequest=getHealth(controller.signal)
       .then(data => { if (!controller.signal.aborted) setHealth(data); })
-      .catch(() => { if (!controller.signal.aborted) setHealth(null); })
-      .finally(() => { if (!controller.signal.aborted) setConnecting(false); });
+      .catch(() => { if (!controller.signal.aborted) setHealth(null); });
+    Promise.allSettled([sessionRequest,healthRequest]).then(()=>{if(!controller.signal.aborted)setConnecting(false);});
     getResource('scenarios', undefined, controller.signal)
       .then(data => { if (!controller.signal.aborted) setScenarios(Array.isArray(data) ? data : data.scenarios ?? []); })
       .catch(() => {});
@@ -181,6 +193,7 @@ export default function App() {
   }, [view, turn?.id, clarification?.query, pending, newTopic]);
 
   useEffect(() => {
+    if(restoringSettings.current===sessionId){restoringSettings.current=null;return;}
     if (!turn?.options) return;
     setSettings({
       model: turn.options.model ?? defaultSettings.model,
@@ -189,7 +202,7 @@ export default function App() {
       rerank: turn.options.rerank ?? defaultSettings.rerank,
       topicLock: turn.options.topicLock ?? defaultSettings.topicLock,
     });
-  }, [turn?.id, turn?.options?.model, turn?.options?.domain, turn?.options?.diversity, turn?.options?.rerank, turn?.options?.topicLock]);
+  }, [sessionId,turn?.id, turn?.options?.model, turn?.options?.domain, turn?.options?.diversity, turn?.options?.rerank, turn?.options?.topicLock]);
 
   const loadEvaluation = useCallback(async () => {
     setEvaluation(null);
@@ -204,6 +217,14 @@ export default function App() {
   useEffect(() => {
     if (view === 'experiments') loadEvaluation();
   }, [view, loadEvaluation]);
+
+  const loadDemos=useCallback(async()=>{
+    setDemoLoading(true);setDemoCatalogError('');
+    try{setDemoCatalog(await getResource('demos'));}
+    catch(err){setDemoCatalogError(`Could not load the demo catalog. ${err.message}`);}
+    finally{setDemoLoading(false);}
+  },[]);
+  useEffect(()=>{if(view==='demos'&&!demoCatalog&&!demoLoading&&!demoCatalogError)loadDemos();},[view,demoCatalog,demoLoading,demoCatalogError,loadDemos]);
 
   function searchOptions() {
     return { ...settings, domain: settings.domain || null };
@@ -267,6 +288,16 @@ export default function App() {
         setComparison(null);
         setScenario(previous => previous?.turns[previous.step]?.trim() === trimmed
           ? { ...previous, step: previous.step + 1 } : previous);
+        const guidedChoice=activeDemo&&(activeDemo.waiting||activeDemo.tour.steps[activeDemo.index]?.action==='clarify')&&trimmed===activeDemo.context.pendingQuery;
+        if(guidedChoice){
+          const expectedChoice=activeDemo.tour.steps[activeDemo.index]?.choice;
+          const selectedTopic=result.session.topics.find(item=>item.id===result.session.activeTopicId);
+          const verified=result.results?.length>0&&(!expectedChoice||selectedTopic?.title===expectedChoice);
+          setActiveDemo(previous=>({...previous,index:previous.index+(verified?1:0),waiting:false,lastStepTitle:previous.tour.steps[previous.index].title,lastView:'search',
+            context:{...previous.context,response:result,session:result.session,lastTurn:committedTurn,pendingQuery:null,isPreview:false},
+            results:verified?[...previous.results,{title:previous.tour.steps[previous.index].title,passed:true}]:previous.results,
+            check:{passed:verified,details:[{passed:verified,detail:verified?'Interpretation selected; live evidence returned.':'The selected interpretation did not match this tour. Restart to follow its specified choice.'}]}}));
+        }
       } catch (err) {
         setInput(previous => previous || trimmed);
         throw err;
@@ -411,6 +442,75 @@ export default function App() {
     });
   }
 
+  function startDemo(tour){
+    if(!tour||operation.current)return;
+    run('demo-start',async()=>{
+      if(!activeDemo)returnWorkspace.current={sessionId,savedResults,selectedTurnId,settings,preview,comparison,comparePreset,
+        input,scenario,newTopic,clarification,exclusions,document,methods,contextAudit,traceTab,notice,error};
+      const nextId=`demo_${crypto.randomUUID().replaceAll('-','')}`;
+      const clean=await getResource('session',nextId);
+      if(activeDemo)await resetSession(activeDemo.context.sessionId);
+      installedSession.current=nextId;
+      setSessionId(nextId);setSession(clean);setSavedResults({});setSelectedTurnId(null);setSettings(defaultSettings);
+      clearSelectedResult();setComparison(null);setScenario(null);setInput('');setNewTopic(false);
+      setActiveDemo({tour,index:0,results:[],check:null,waiting:false,lastView:'search',context:{sessionId:nextId,session:clean}});
+      setView('search');setMobilePane(null);
+    });
+  }
+
+  function exitDemo(){
+    if(!activeDemo||operation.current)return;
+    run('demo-exit',async()=>{
+      const savedWorkspace=returnWorkspace.current;
+      const restored=await getResource('session',savedWorkspace.sessionId);
+      await resetSession(activeDemo.context.sessionId);
+      installedSession.current=savedWorkspace.sessionId;restoringSettings.current=savedWorkspace.sessionId;
+      setSessionId(savedWorkspace.sessionId);setSession(restored);setSavedResults(savedWorkspace.savedResults);
+      setSelectedTurnId(savedWorkspace.selectedTurnId);setSettings(savedWorkspace.settings);
+      clearSelectedResult();setPreview(savedWorkspace.preview);setComparison(savedWorkspace.comparison);
+      setClarification(savedWorkspace.clarification);setExclusions(savedWorkspace.exclusions);setDocument(savedWorkspace.document);
+      setMethods(savedWorkspace.methods);setContextAudit(savedWorkspace.contextAudit);setTraceTab(savedWorkspace.traceTab);
+      setNotice(savedWorkspace.notice);setError(savedWorkspace.error);
+      setComparePreset(savedWorkspace.comparePreset);setActiveDemo(null);returnWorkspace.current=null;
+      setScenario(savedWorkspace.scenario);setInput(savedWorkspace.input);setNewTopic(savedWorkspace.newTopic);setView('search');setMobilePane(null);
+    });
+  }
+
+  function runDemoStep(){
+    if(!activeDemo||operation.current||activeDemo.waiting)return;
+    const step=activeDemo.tour.steps[activeDemo.index];
+    if(!step)return;
+    run('demo-step',async()=>{
+      const result=await executeDemoStep(step,{...activeDemo.context,session},
+        {post:postAction,get:resource=>getResource(resource)});
+      const next=result.context;
+      if(next.session)setSession(next.session);
+      if(next.response){
+        const trace=next.response.trace||{};
+        setSettings({model:trace.requestedModel||defaultSettings.model,domain:trace.filters?.domain||'',
+          diversity:trace.diversity??false,rerank:trace.reranking?.policy||'off',topicLock:trace.subjectLock?.requested||'soft'});
+        const last=next.lastTurn;
+        setSelectedTurnId(last?.id||null);
+        setClarification(next.response.clarification?{data:next.response.clarification,query:next.pendingQuery,trace:next.response.trace,options:{...defaultSettings,...step.options}}:null);
+        if(last){
+          if(next.isPreview)setPreview({result:next.response,turnId:last.id,currentTopic:Boolean(next.currentFeedback),contextVariant:step.options?.contextVariant});
+          else {setSavedResults(previous=>({...previous,[last.id]:next.response}));setPreview(null);}
+        }
+        setExclusions(next.response.trace?.filters?.excludedTerms||[]);
+      }
+      if(next.comparison)setComparison(next.comparison);
+      if(next.methods)setMethods(next.methods);
+      if(next.contextAudit)setContextAudit(next.contextAudit);
+      if(next.evaluation)setEvaluation(next.evaluation);
+      if(result.comparisonMode)setDemoComparisonMode(result.comparisonMode);
+      setDocument(null);setNewTopic(false);setInput('');setTraceTab(result.traceTab==='novelty'?'profile':result.traceTab);
+      setView(result.view);setMobilePane(null);
+      setActiveDemo(previous=>({...previous,context:next,waiting:result.awaitingChoice,check:result.awaitingChoice?null:result.check,
+        lastStepTitle:step.title,lastView:result.view,index:result.check.passed?previous.index+1:previous.index,
+        results:result.check.passed?[...previous.results,{title:step.title,...result.check}]:previous.results}));
+    });
+  }
+
   const currentTrace = pending ? null : clarification?.trace ?? response?.trace;
   const showTurn = Boolean(turn || pending || clarification);
   const searchDisabled = Boolean(busy || connecting);
@@ -421,11 +521,13 @@ export default function App() {
       <Header view={view} onNavigate={navigate} health={health} isConnecting={connecting} mobilePane={mobilePane} onPane={togglePane} />
       {mobilePane && <button className="drawer-overlay" type="button" aria-label="Close open panel" onClick={() => setMobilePane(null)} />}
       <aside className={`sidebar ${mobilePane === 'topics' ? 'drawer-open' : ''}`} aria-label="Topic workspace">
-        <Sidebar session={session} health={health} busy={searchDisabled} newTopic={newTopic} onNewTopic={startNewTopic}
+        <Sidebar session={session} health={health} busy={searchDisabled||Boolean(activeDemo)} newTopic={newTopic} onNewTopic={startNewTopic}
           onTopic={switchTopic} onUndo={undo} onExport={() => run('export', () => exportSession(sessionId))}
           onReset={() => setConfirmReset(true)} onClose={() => setMobilePane(null)} />
       </aside>
       <main className="main-pane">
+        {activeDemo&&<DemoGuide demo={activeDemo} busy={Boolean(busy)} connecting={connecting} onRun={runDemoStep} onExit={exitDemo}
+          onRestart={()=>startDemo(activeDemo.tour)} onCatalog={()=>navigate('demos')}/>}
         <div className="main-scroll" ref={scrollRef}>
           {bootError && view !== 'experiments' && <div className="message-wrap"><Status kind="error">{bootError}{' '}
             <button className="text-button" type="button" onClick={() => setBootAttempt(value => value + 1)}>Reconnect</button>
@@ -436,19 +538,22 @@ export default function App() {
             {busy === 'preview' && <div className="message-wrap"><Status kind="loading">Re-scoring the selected question…</Status></div>}
             {showTurn ? <TurnResults turns={turns} turn={turn} response={response} preview={visiblePreview} pending={pending}
               clarification={clarification} topic={newTopic ? null : topic} busy={searchDisabled} onTurn={chooseTurn}
-              onInterpret={id => submit(clarification.query, id)} onCancelClarification={() => setClarification(null)}
+              onInterpret={id => submit(clarification.query, id)} onCancelClarification={activeDemo?undefined:()=>setClarification(null)}
               onCustomFocus={customSense => submit(clarification.query, undefined, false, { customSense })}
               onPreview={() => rescore()} onQuestionOnly={() => run('preview', () => requestPreview([], false, true))}
               onRestore={visiblePreview && saved ? clearSelectedResult : null}
-              onFeedback={recordFeedback} onInspect={doc => { setDocument(doc); setMobilePane('trace'); }}
+              feedbackDisabled={Boolean(activeDemo)} onFeedback={recordFeedback} onInspect={doc => { setDocument(doc); setMobilePane('trace'); }}
               onTrace={id => { setDocument(null); setTraceTab(id); setMobilePane('trace'); }}
               onCompare={() => { navigate('compare'); if (turn) compare(turn.query); }} />
               : <Welcome scenarios={scenarios} onScenario={startScenario} newTopic={newTopic} disabled={searchDisabled} />}
           </>}
-          {view === 'compare' && <CompareView preset={comparePreset} comparison={comparison} busy={busy === 'compare'} onCompare={compare} loadBenchmarks={loadComparisonBenchmarks} />}
+          {view === 'demos' && <DemoLab catalog={demoCatalog} error={demoCatalogError} loading={demoLoading} onReload={loadDemos} health={health}
+            busy={Boolean(busy)||connecting} active={activeDemo} onStart={startDemo} onResume={()=>setView(activeDemo.lastView||'search')}
+            onConversation={conversation=>startDemo(makeConversationTour(conversation))}/>}
+          {view === 'compare' && <CompareView key={activeDemo?demoComparisonMode:'normal'} initialMode={activeDemo?demoComparisonMode:'ranking'} preset={activeDemo?comparison?.query:comparePreset} comparison={comparison} busy={busy === 'compare'||busy==='demo-step'} onCompare={compare} loadBenchmarks={loadComparisonBenchmarks} />}
           {view === 'experiments' && <ExperimentsView evaluation={evaluation} error={evaluationError} onReload={loadEvaluation} />}
         </div>
-        {view === 'search' && <Composer input={input} setInput={setInput} inputRef={inputRef} settings={settings} setSettings={setSettings}
+        {view === 'search' && !activeDemo && <Composer input={input} setInput={setInput} inputRef={inputRef} settings={settings} setSettings={setSettings}
           onExploreTerm={exploreTerm}
           semantic={semantic} reranker={health?.semantic?.reranker} busy={searchDisabled} onSubmit={() => submit()} onPreview={() => rescore()}
           canPreview={Boolean(turn && !clarification)} scenario={scenario} onDismissScenario={() => setScenario(null)}

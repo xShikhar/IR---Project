@@ -45,6 +45,14 @@ Original `/api/chat` and midterm modules remain intact; new behavior lives in `s
 
 ## Demo
 
+### Study the project before the viva
+
+Read the [complete project study guide](docs/PROJECT_STUDY_GUIDE.md) for IR foundations, every implemented feature, formulas and worked examples, architecture, code map, measured results, limitations, a research-paper primer, and 70 viva questions with answers. Start with its study route and use the final revision sheet before the viva.
+
+Open **Demo lab** in the top navigation for eleven guided feature tours and all fourteen original benchmark conversations. Each tour runs in an isolated session, shows presenter notes and expected observations, and verifies the live API response after each step. Use **Run first step / Run next step**, inspect the evidence and execution trace, then **Return to workspace** to restore your search history, draft and controls. Model-dependent tours are disabled if their local models are unavailable.
+
+Suggested presentation sequence: topic switching and resumption, Mercury disambiguation, context inspection, feedback/undo, adaptive reranking, and benchmark relevance. See [the presentation guide](docs/DEMO_LAB.md).
+
 1. Ask **What is the James Webb Space Telescope?** Then **Where is its orbit?**
 2. Ask **Explain CRISPR gene editing.** Two topic branches appear.
 3. Ask **Back to JWST, what instruments does it carry?** The telescope branch resumes.

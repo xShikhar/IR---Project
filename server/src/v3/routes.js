@@ -202,6 +202,13 @@ export function createV3Router(index) {
     if(fs.existsSync(file)) {const payload=JSON.parse(fs.readFileSync(file,'utf8'));res.json(Array.isArray(payload)?payload:payload.scenarios||[]);}
     else res.json([{id:'return-to-topic',title:'Switch topics. Keep your place.',description:'Explore JWST, visit CRISPR, and return to the telescope.',turns:['What is the James Webb Space Telescope?','Where is its orbit located?','Explain CRISPR gene editing.','What are its limitations?','Back to JWST, what instruments does it carry?']},{id:'mercury',title:'One word. Different worlds.',description:'Resolve an ambiguous subject and follow its meaning.',turns:['Tell me about Mercury','How does it affect the nervous system?']}]);
   });
+  route('get','/demos',(_req,res)=>{
+    const catalog=JSON.parse(fs.readFileSync(path.join(CONFIG.paths.dataDir,'demo_tours.json'),'utf8'));
+    const conversations=JSON.parse(fs.readFileSync(CONFIG.paths.conversationsFile,'utf8'));
+    res.json({...catalog,conversations:conversations.map(({id,topic,domain,turns})=>({
+      id,title:topic||turns[0]?.query||id,topic,domain,turns:turns.map(({turnId,query})=>({turnId,query}))
+    }))});
+  });
   route('get','/evaluation',(_req,res)=>{
     const base=path.join(CONFIG.paths.evalOutputDir,'v3');
     const semantic=fs.existsSync(path.join(base,'semantic','summary.json'));
