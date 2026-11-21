@@ -68,4 +68,81 @@ describe('v3 API integration',()=>{
     assert.deepEqual(after.body.final.results, before.body.final.results);
     assert.deepEqual(after.body.session, later.body.session);
   });
+  it('enforces quoted phrases across channels and profiles the saved search', async () => {
+    const sessionId = 'api_v3_trace';
+    const query = '"James Webb Space Telescope"';
+    const search = await post('search', { sessionId, query });
+    assert.equal(search.status, 200);
+    assert.ok(search.body.trace.phraseMatches[0].matchingDocCount > 0);
+    assert.ok(search.body.results.length);
+    assert.ok(search.body.results.every(doc => [doc.title, doc.body].some(text => /james\s+webb\s+space\s+telescope/i.test(text))));
+    assert.ok(search.body.trace.postings.some(({ term, df }) => term === 'webb' && df > 0));
+    assert.ok(search.body.trace.timings.lexicalScoring >= 0);
+    const methods = await post('methods', { sessionId, turnId: search.body.session.turns[0].id });
+    assert.equal(methods.status, 200);
+    assert.deepEqual(methods.body.comparisons.map(item => item.model), ['bm25', 'cosine', 'semantic', 'hybrid']);
+    assert.equal(methods.body.comparisons[0].available, true);
+    assert.ok(methods.body.comparisons[0].results.length);
+    const after = await (await fetch(`${url}/api/v3/session?sessionId=${sessionId}`)).json();
+    assert.deepEqual(after, search.body.session);
+  });
+  it('scores benchmark comparisons after an isolated replay', async () => {
+    const sessionId = 'api_v3_benchmark';
+    const saved = await post('search', { sessionId, query: 'James Webb Space Telescope' });
+    const list = await (await fetch(`${url}/api/v3/comparison-benchmarks?sessionId=${sessionId}`)).json();
+    const item = list.find(turn => turn.earlierTurns === 1);
+    assert.ok(item);
+    assert.equal(Object.hasOwn(item, 'grades'), false);
+    const replay = await post('compare', { sessionId, benchmarkId: item.id });
+    assert.equal(replay.status, 200);
+    assert.deepEqual(replay.body.session, saved.body.session);
+    assert.equal(replay.body.query, item.query);
+    assert.equal(replay.body.replay.priorTurnCount, item.earlierTurns);
+    assert.ok(Number.isFinite(replay.body.relevance.baseline.ndcg10));
+    assert.ok(Number.isFinite(replay.body.relevance.final.ndcg10));
+    assert.ok(replay.body.relevance.final.judgedAt10 <= replay.body.relevance.final.retrievedAt10);
+  });
+  it('explores a custom term and commits only after a grounded choice', async () => {
+    const sessionId = 'api_v3_sense_explorer';
+    const query = 'How does it change voltage?';
+    const senseQuery = 'transformer';
+    const unresolved = await post('search', { sessionId, query, senseQuery });
+    assert.equal(unresolved.status, 200);
+    assert.equal(unresolved.body.session.turns.length, 0);
+    const choices = unresolved.body.clarification.options;
+    assert.ok(choices.some(item => item.title.includes('deep learning')));
+    const electrical = choices.find(item => item.title === 'Transformer');
+    assert.ok(electrical);
+    const resolved = await post('search', { sessionId, query, senseQuery, interpretationId: electrical.id, model: 'bm25' });
+    assert.equal(resolved.status, 200);
+    assert.equal(resolved.body.session.topics[0].interpretationId, electrical.id);
+    assert.equal(resolved.body.session.turns[0].query, query);
+    const followUp = await post('search', { sessionId, query: 'What are its applications?' });
+    assert.equal(followUp.body.trace.decision.topicTitle, 'Transformer');
+
+    const customSession = 'api_v3_sense_custom';
+    const missing = await post('search', { sessionId: customSession, query, senseQuery: 'zzztokenneverindexed' });
+    assert.deepEqual(missing.body.clarification.options, []);
+    const custom = await post('search', { sessionId: customSession, query, senseQuery: 'zzztokenneverindexed',
+      customSense: { title: 'Electrical equipment', keywords: 'transformer voltage' } });
+    assert.equal(custom.status, 200);
+    assert.equal(custom.body.trace.decision.topicTitle, 'Electrical equipment');
+    assert.ok(custom.body.results.length);
+  });
+  it('isolates context changes on a saved elaboration and leaves its session intact', async () => {
+    const sessionId = 'api_v3_context_audit';
+    for (const query of ['James Webb Space Telescope', 'What about its mirror?']) {
+      assert.equal((await post('search', { sessionId, query, model: 'bm25' })).status, 200);
+    }
+    const saved = await post('search', { sessionId, query: 'Tell me more.', model: 'bm25' });
+    const turnId = saved.body.session.turns.at(-1).id;
+    const audit = await post('context-audit', { sessionId, turnId });
+    assert.equal(audit.status, 200);
+    const history = audit.body.variants.find(item => item.id === 'without-history');
+    assert.notDeepEqual(history.results.map(item => item.docId), audit.body.baseline.results.map(item => item.docId));
+    const preview = await post('preview', { sessionId, turnId, contextVariant: 'without-history' });
+    assert.equal(preview.body.trace.contextRemoved, 'earlier aspect terms');
+    assert.deepEqual(preview.body.results.slice(0, 5).map(item => item.docId), history.results.map(item => item.docId));
+    assert.deepEqual(preview.body.session, saved.body.session);
+  });
 });

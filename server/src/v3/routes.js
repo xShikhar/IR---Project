@@ -6,12 +6,35 @@ import { createSearchService } from './search.js';
 import { executeConversationalTurn } from '../api/traceAssembly.js';
 import { ContextState } from '../conversation/contextState.js';
 import { CONFIG } from '../config/index.js';
+import { scoreRanking } from '../../../eval/src/v3Metrics.js';
 
 const domains=new Set(['cs_ai','space_physics','history_civilization','biology_medicine']);
 const models=new Set(['hybrid','bm25','cosine','semantic']);
+const contextVariants=['without-topic','without-history','without-feedback'];
+
+function loadBenchmarks() {
+  const files=[CONFIG.paths.conversationsFile,CONFIG.paths.splitsFile,CONFIG.paths.qrelsFile];
+  if(!files.every(file=>fs.existsSync(file))) return new Map();
+  const [dialogs,splits,judgments]=files.map(file=>JSON.parse(fs.readFileSync(file,'utf8')));
+  const testIds=new Set(splits.test.conversationIds);
+  const turns=new Map();
+  for(const dialog of dialogs.filter(item=>testIds.has(item.id))) {
+    const history=[];
+    for(const turn of dialog.turns) {
+      const id=`${dialog.id}_${turn.turnId}`;
+      if(Object.hasOwn(judgments,id)) {
+        turns.set(id,{id,topic:dialog.topic,query:turn.query,history:[...history],grades:judgments[id]});
+      }
+      history.push(turn.query);
+    }
+  }
+  return turns;
+}
+
 export function createV3Router(index) {
   const router=express.Router();
   const search=index?createSearchService(index):null;
+  const benchmarks=loadBenchmarks();
   const sessions=new Map();
   const error=(message,status=400)=>Object.assign(new Error(message),{status});
   function entry(req) {
@@ -31,11 +54,23 @@ export function createV3Router(index) {
     if(body.domain&&!domains.has(body.domain))throw error('Unknown domain filter.');
     if(body.diversity!==undefined&&typeof body.diversity!=='boolean')throw error('diversity must be a boolean.');
     if(body.rerank!==undefined&&!['off','fixed','adaptive'].includes(body.rerank))throw error('Unknown reranking policy.');
+    if(body.topicLock!==undefined&&!['soft','hard'].includes(body.topicLock))throw error('Unknown topic lock mode.');
     if(body.questionOnly!==undefined&&typeof body.questionOnly!=='boolean')throw error('questionOnly must be a boolean.');
+    if(body.contextVariant!==undefined&&!contextVariants.includes(body.contextVariant))throw error('Unknown context variant.');
+    const focusField=(value,maxLength,label)=>{
+      if(typeof value!=='string'||!value.trim()||value.length>maxLength)throw error(`${label} must contain 1 to ${maxLength} characters.`);
+      return value.trim();
+    };
+    const senseQuery=body.senseQuery===undefined?undefined:focusField(body.senseQuery,120,'Term to explore');
+    let customSense;
+    if(body.customSense!==undefined) {
+      if(!senseQuery||!body.customSense||typeof body.customSense!=='object'||Array.isArray(body.customSense))throw error('A custom focus requires an explored term.');
+      customSense={title:focusField(body.customSense.title,90,'Focus label'),keywords:focusField(body.customSense.keywords,160,'Focus keywords')};
+    }
     if(body.newTopic!==undefined&&typeof body.newTopic!=='boolean')throw error('newTopic must be a boolean.');
     if(body.excludedTerms!==undefined&&(!Array.isArray(body.excludedTerms)||body.excludedTerms.length>80||body.excludedTerms.some(t=>typeof t!=='string'||t.length>100)))throw error('excludedTerms must be an array of up to 80 short strings.');
     for(const key of ['topicId','interpretationId','turnId'])if(body[key]!==undefined&&(typeof body[key]!=='string'||body[key].length>250))throw error(`Invalid ${key}.`);
-    return {model:body.model||'hybrid',diversity:body.diversity===true,rerank:body.rerank??'off',domain:body.domain||null,topK:10,topicId:body.topicId,interpretationId:body.interpretationId,newTopic:body.newTopic,excludedTerms:body.excludedTerms||[],turnId:body.turnId,questionOnly:body.questionOnly===true};
+    return {model:body.model||'hybrid',diversity:body.diversity===true,rerank:body.rerank??'off',topicLock:body.topicLock??'soft',domain:body.domain||null,topK:10,topicId:body.topicId,interpretationId:body.interpretationId,newTopic:body.newTopic,excludedTerms:body.excludedTerms||[],turnId:body.turnId,questionOnly:body.questionOnly===true,senseQuery,customSense,contextVariant:body.contextVariant};
   }
   const query=value=>{if(typeof value!=='string'||!value.trim()||value.length>2000)throw error('query must contain 1 to 2,000 characters.');return value.trim();};
   function route(method,url,handler) {
@@ -56,11 +91,72 @@ export function createV3Router(index) {
     if(!req.body.turnId)delete inherited.newTopic;
     res.json(await w.turn(query(req.body.query||turn?.query),{...options({...inherited,...req.body}),preview:true}));
   });
+  route('post','/methods',async(req,res,w)=>{
+    const turn=w.snapshot().turns.find(item=>item.id===req.body.turnId);
+    if(!turn)throw error('Select a saved question to compare methods.');
+    const settings=options({...turn.options,...req.body,diversity:false,rerank:'off'});
+    const comparisons=[];
+    for (const model of ['bm25','cosine','semantic','hybrid']) {
+      if (model==='semantic' && !search.status().semantic.available) {
+        comparisons.push({model,available:false,reason:search.status().semantic.reason});
+        continue;
+      }
+      const run=await w.turn(turn.query,{...settings,model,preview:true,turnId:turn.id});
+      comparisons.push({
+        model,available:!run.clarification&&(model!=='semantic'||run.trace.semantic?.available),
+        reason:run.clarification?.question??(model==='semantic'?run.trace.semantic?.reason:undefined),
+        effectiveModel:run.trace.effectiveModel, elapsedMs:run.trace.timings?.totalMs,
+        results:run.results.slice(0,5).map(({docId,title})=>({docId,title})),
+      });
+    }
+    res.json({turnId:turn.id,comparisons});
+  });
+  route('post','/context-audit',async(req,res,w)=>{
+    const turn=w.snapshot().turns.find(item=>item.id===req.body.turnId);
+    if(!turn)throw error('Select a saved question to compare its context.');
+    const replay=async contextVariant=>{
+      const run=await w.turn(turn.query,{...options(turn.options),turnId:turn.id,preview:true,contextVariant});
+      return {
+        results:run.results.slice(0,5).map(({docId,title,snippet})=>({docId,title,snippet})),
+        total:run.results.length, scope:run.trace.subjectLock?.effective,
+      };
+    };
+    const baseline=await replay();
+    const variants=[];
+    for(const id of contextVariants) variants.push({id,...await replay(id)});
+    res.json({turnId:turn.id,baseline,variants});
+  });
   route('post','/topic',(req,res,w)=>res.json(w.selectTopic(req.body.topicId)));
   route('post','/feedback',(req,res,w)=>res.json(w.feedback(req.body.docId,req.body.action,req.body.topicId)));
   route('post','/undo',(_req,res,w)=>res.json(w.undo()));
+  route('get','/comparison-benchmarks',(_req,res)=>res.json(
+    [...benchmarks.values()].map(({id,topic,query,history})=>({id,topic,query,earlierTurns:history.length}))
+  ));
   route('post','/compare',async(req,res,w)=>{
     const state=w.snapshot();
+    if(req.body.benchmarkId!==undefined) {
+      const benchmark=benchmarks.get(req.body.benchmarkId);
+      if(!benchmark)throw error('Unknown benchmark question.',404);
+      const policy=req.body.benchmarkRerank??'off';
+      if(!['off','fixed','adaptive'].includes(policy))throw error('Unknown benchmark reranking policy.');
+      const baselineState=new ContextState({mode:'v2'});
+      const replay=createWorkspace(index,search);
+      const settings={model:'hybrid',topK:10,diversity:false};
+      for(const utterance of benchmark.history) {
+        await executeConversationalTurn(utterance,baselineState,index,{topK:10});
+        await replay.turn(utterance,settings);
+      }
+      const baseline=await executeConversationalTurn(benchmark.query,baselineState,index,{topK:10});
+      const final=await replay.turn(benchmark.query,{...settings,rerank:policy,preview:true});
+      const grades=Object.fromEntries([...baseline.results,...final.results]
+        .filter(item=>Object.hasOwn(benchmark.grades,item.docId))
+        .map(item=>[item.docId,benchmark.grades[item.docId]]));
+      return res.json({query:benchmark.query,baseline,final,session:state,
+        replay:{benchmarkId:benchmark.id,priorTurnCount:benchmark.history.length,rerank:policy},
+        relevance:{source:'Inherited AI relevance judgments · TEST split',grades,
+          baseline:scoreRanking(baseline.results,benchmark.grades),final:scoreRanking(final.results,benchmark.grades)},
+      });
+    }
     const suppliedQuery=req.body.query===undefined?undefined:query(req.body.query);
     const selectedIndex=req.body.turnId
       ? state.turns.findIndex(turn=>turn.id===req.body.turnId)
@@ -71,10 +167,22 @@ export function createV3Router(index) {
     const selected=state.turns[selectedIndex];
     const q=suppliedQuery??query(req.body.subjects?'overview':selected?.query);
     const opts=options({...selected?.options,...req.body});
+    const midterm=req.body.midterm;
+    const baselineSettings={topK:10,applySeenPenalty:true};
+    if(midterm!==undefined) {
+      if(!midterm||typeof midterm!=='object'||Array.isArray(midterm))throw error('Invalid midterm settings.');
+      if(!['bm25','cosine'].includes(midterm.model))throw error('Unknown midterm model.');
+      if(!['hard','soft'].includes(midterm.lockMode))throw error('Unknown midterm lock mode.');
+      Object.assign(baselineSettings,{model:midterm.model,lockMode:midterm.lockMode});
+      for(const key of ['useChampionLists','applyIndexElimination','applySeenPenalty']) {
+        if(typeof midterm[key]!=='boolean')throw error(`Invalid midterm value for ${key}.`);
+        baselineSettings[key]=midterm[key];
+      }
+    }
     const ctx=new ContextState();
     const history=selected?state.turns.slice(0,selectedIndex):state.turns;
-    for(const turn of history)await executeConversationalTurn(turn.query,ctx,index,{topK:10,applySeenPenalty:true});
-    const baseline=await executeConversationalTurn(q,ctx,index,{topK:10,applySeenPenalty:true});
+    for(const turn of history)await executeConversationalTurn(turn.query,ctx,index,baselineSettings);
+    const baseline=await executeConversationalTurn(q,ctx,index,baselineSettings);
     const final=await w.turn(q,{...opts,preview:true,turnId:selected?.id});
     const ranks=new Map(baseline.results.map((r,i)=>[r.docId,i+1]));
     const rankChanges=final.results.map((r,i)=>({docId:r.docId,title:r.title,baselineRank:ranks.get(r.docId)||null,finalRank:i+1,delta:ranks.has(r.docId)?ranks.get(r.docId)-(i+1):null}));

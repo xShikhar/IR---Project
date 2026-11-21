@@ -26,44 +26,93 @@ function RankingList({ title, icon, results, accent, context = [] }) {
   );
 }
 
-function RankChanges({ baseline, final }) {
+function RankChanges({ baseline, final, relevance }) {
   const finalRanks = new Map(final.map((doc, index) => [doc.docId, index + 1]));
   const baselineRanks = new Map(baseline.map((doc, index) => [doc.docId, index + 1]));
-  const titles = new Map([...baseline, ...final].map(doc => [doc.docId, doc.title]));
-  const changes = Array.from(titles, ([id, title]) => ({
-    id, title, before: baselineRanks.get(id), after: finalRanks.get(id),
-  })).filter(({ before, after }) => before !== after);
-  if (changes.length === 0) return null;
+  const documents = new Map([...baseline, ...final].map(doc => [doc.docId, doc]));
+  const changes = Array.from(documents, ([id, document]) => ({
+    id, document, before: baselineRanks.get(id), after: finalRanks.get(id),
+  })).filter(({ before, after }) => before !== after).sort((a, b) =>
+    Math.min(a.before ?? Infinity, a.after ?? Infinity) - Math.min(b.before ?? Infinity, b.after ?? Infinity)
+  );
+  const shared = baseline.filter(doc => finalRanks.has(doc.docId)).length;
+  const grades = ['Irrelevant', 'Useful context', 'Direct answer'];
 
   return (
     <section className="rank-changes report-card">
       <h2>Rank movement</h2>
+      <p className="rank-movement-note">Expand a passage to read its text. Position alone does not establish relevance.</p>
+      <dl className="rank-summary">
+        <div><dt>Shared passages</dt><dd>{shared}</dd></div>
+        <div><dt>Only in TurnTrace 2</dt><dd>{final.length - shared}</dd></div>
+        <div><dt>Only in midterm</dt><dd>{baseline.length - shared}</dd></div>
+      </dl>
       <div className="data-table-wrap">
-        <table className="data-table"><thead><tr><th>Passage</th><th>Midterm rank</th><th>TurnTrace 2 rank</th><th>Change</th></tr></thead>
-          <tbody>{changes.map(({ id, title, before, after }) => (
-            <tr key={id}><th scope="row">{title}</th><td>{before ?? '—'}</td><td>{after ?? '—'}</td>
-              <td>{before == null ? <span className="movement positive">Added</span> : after == null ? <span className="movement negative">Dropped</span>
-                : <span className={`movement ${before > after ? 'positive' : 'negative'}`}>{before > after ? '↑' : '↓'} {Math.abs(before - after)}</span>}</td></tr>
+        {changes.length ? <table className="data-table"><thead><tr><th>Passage</th><th>Midterm rank</th><th>TurnTrace 2 rank</th><th>Movement</th>{relevance && <th>Relevance grade</th>}</tr></thead>
+          <tbody>{changes.map(({ id, document, before, after }) => (
+            <tr key={id}><th scope="row"><details className="changed-passage">
+              <summary>{document.title}</summary><p>{document.body ?? document.snippet}</p>
+            </details></th><td>{before ?? '—'}</td><td>{after ?? '—'}</td>
+              <td><span className="rank-neutral">{before == null ? 'Entered results' : after == null ? 'Left results'
+                : `${before > after ? '↑' : '↓'} ${Math.abs(before - after)}`}</span></td>
+              {relevance && <td>{grades[relevance.grades[id]] ?? 'Unjudged'}</td>}</tr>
           ))}</tbody>
-        </table>
+        </table> : <p className="rank-movement-note">The returned passages occupy the same positions.</p>}
       </div>
     </section>
   );
 }
 
-export function CompareView({ preset, comparison, busy, onCompare }) {
+function RelevanceSummary({ relevance }) {
+  if (!relevance) return <div className="comparison-evidence-note">
+    <Icon name="info" size={17} /><span>There are no reference grades for this replay. Use a benchmark question to compare measured relevance.</span>
+  </div>;
+  const { baseline, final, source } = relevance;
+  return <section className="report-card comparison-relevance">
+    <h2>Measured relevance for this question</h2>
+    <p>{source}. Scores use the available grades, and unjudged passages receive zero gain in nDCG.</p>
+    <table className="data-table"><thead><tr><th>Measure</th><th>Midterm</th><th>TurnTrace 2</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">nDCG@10</th><td>{numeric(baseline.ndcg10, 4)}</td><td>{numeric(final.ndcg10, 4)}</td></tr>
+        <tr><th scope="row">Precision@10</th><td>{numeric(baseline.p10, 4)}</td><td>{numeric(final.p10, 4)}</td></tr>
+        <tr><th scope="row">Judged passages</th><td>{baseline.judgedAt10} of {baseline.retrievedAt10}</td><td>{final.judgedAt10} of {final.retrievedAt10}</td></tr>
+      </tbody></table>
+  </section>;
+}
+
+export function CompareView({ preset, comparison, busy, onCompare, loadBenchmarks }) {
   const [mode, setMode] = useState('ranking');
   const [query, setQuery] = useState(preset ?? '');
   const [first, setFirst] = useState('');
   const [second, setSecond] = useState('');
+  const [benchmarkId, setBenchmarkId] = useState('');
+  const [benchmarkRerank, setBenchmarkRerank] = useState('off');
+  const [benchmarks, setBenchmarks] = useState(null);
+  const [benchmarkError, setBenchmarkError] = useState('');
+  const [customMidterm, setCustomMidterm] = useState(false);
+  const [midterm, setMidterm] = useState({
+    model: 'cosine', lockMode: 'hard',
+    useChampionLists: false, applyIndexElimination: false, applySeenPenalty: true,
+  });
   useEffect(() => { setQuery(preset ?? ''); }, [preset]);
+  useEffect(() => {
+    if (mode !== 'benchmark') return;
+    const controller = new AbortController();
+    loadBenchmarks(controller.signal).then(setBenchmarks).catch(error => {
+      if (!controller.signal.aborted) setBenchmarkError(error.message);
+    });
+    return () => controller.abort();
+  }, [mode, loadBenchmarks]);
 
   const baseline = comparison?.baseline?.results ?? [];
   const final = comparison?.final?.results ?? [];
   const subjects = comparison?.subjects ?? [];
   const baselineTrace = comparison?.baseline?.trace;
   const finalTrace = comparison?.final?.trace;
-  const hasResults = mode === 'subjects' ? subjects.length > 0 : Boolean(comparison?.baseline && comparison?.final);
+  const isRanking = mode !== 'subjects';
+  const isBenchmark = mode === 'benchmark';
+  const hasRankings = Boolean(comparison?.baseline && comparison?.final && Boolean(comparison?.replay?.benchmarkId) === isBenchmark);
+  const hasResults = isRanking ? hasRankings && !comparison?.subjects : subjects.length > 0;
 
   return (
     <div className="research-page">
@@ -72,34 +121,75 @@ export function CompareView({ preset, comparison, busy, onCompare }) {
       </div>
       <div className="switch-group" aria-label="Comparison mode">
         <button type="button" aria-pressed={mode === 'ranking'} onClick={() => setMode('ranking')}>Rankings</button>
+        <button type="button" aria-pressed={isBenchmark} onClick={() => setMode('benchmark')}>Benchmark relevance</button>
         <button type="button" aria-pressed={mode === 'subjects'} onClick={() => setMode('subjects')}>Two subjects</button>
       </div>
       <form className="compare-form" onSubmit={event => {
         event.preventDefault();
         if (mode === 'subjects') {
           if (first.trim() && second.trim()) onCompare(query.trim(), [first.trim(), second.trim()]);
-        } else if (query.trim()) onCompare(query.trim());
+        } else if (isBenchmark) {
+          if (benchmarkId) onCompare('', undefined, undefined, benchmarkId, benchmarkRerank);
+        } else if (query.trim()) onCompare(query.trim(), undefined, customMidterm ? midterm : undefined);
       }}>
-        <label><span>{mode === 'subjects' ? 'Focus question (optional)' : 'Search question'}</span>
+        {isBenchmark ? <label><span>Benchmark question</span>
+          <select value={benchmarkId} disabled={busy || !benchmarks?.length} onChange={event => setBenchmarkId(event.target.value)}>
+            <option value="">{benchmarks ? 'Choose a graded TEST question' : 'Loading benchmark questions…'}</option>
+            {benchmarks?.map(turn => <option key={turn.id} value={turn.id}>{turn.topic} · {turn.query}</option>)}
+          </select>
+        </label> : <label><span>{mode === 'subjects' ? 'Focus question (optional)' : 'Search question'}</span>
           <input disabled={busy} value={query} maxLength={2000} onChange={event => setQuery(event.target.value)} placeholder={mode === 'subjects' ? 'e.g. infrared instruments' : 'e.g. What instruments does JWST carry?'} />
-        </label>
+        </label>}
+        {isBenchmark && <label><span>TurnTrace 2 reranking</span>
+          <select value={benchmarkRerank} disabled={busy} onChange={event => setBenchmarkRerank(event.target.value)}>
+            <option value="off">Off</option><option value="fixed">Fixed depth</option><option value="adaptive">Adaptive depth</option>
+          </select>
+        </label>}
         {mode === 'subjects' && <div className="subject-inputs">
           <label><span>First subject</span><input disabled={busy} value={first} maxLength={100} onChange={event => setFirst(event.target.value)} placeholder="e.g. James Webb Space Telescope" /></label>
           <label><span>Second subject</span><input disabled={busy} value={second} maxLength={100} onChange={event => setSecond(event.target.value)} placeholder="e.g. Hubble Space Telescope" /></label>
         </div>}
-        <button className="button primary" type="submit" disabled={busy || (mode === 'ranking' ? !query.trim() : !first.trim() || !second.trim())}>
-          <Icon name="compare" size={18} /> {busy ? 'Comparing…' : mode === 'ranking' ? 'Compare rankings' : 'Compare subjects'}
+        {mode === 'ranking' && <details className="legacy-settings">
+          <summary>Midterm retrieval controls</summary>
+          <label className="legacy-check"><input type="checkbox" checked={customMidterm} disabled={busy}
+            onChange={event => setCustomMidterm(event.target.checked)} /> Customize the midterm run</label>
+          {customMidterm && <div className="legacy-options">
+            <label><span>Midterm model</span><select value={midterm.model} disabled={busy} onChange={event => setMidterm({ ...midterm, model: event.target.value })}>
+              <option value="cosine">SMART cosine</option><option value="bm25">BM25</option>
+            </select></label>
+            <label><span>Entity lock</span><select value={midterm.lockMode} disabled={busy} onChange={event => setMidterm({ ...midterm, lockMode: event.target.value })}>
+              <option value="hard">Hard</option><option value="soft">Soft</option>
+            </select></label>
+            {[
+              ['useChampionLists', 'Champion lists'],
+              ['applyIndexElimination', 'Index elimination'],
+              ['applySeenPenalty', 'Seen-passage penalty'],
+            ].map(([key, title]) => <label key={key} className="legacy-check">
+              <input type="checkbox" checked={midterm[key]} disabled={busy}
+                onChange={event => setMidterm({ ...midterm, [key]: event.target.checked })} /> {title}
+            </label>)}
+          </div>}
+        </details>}
+        <button className="button primary" type="submit" disabled={busy || (isBenchmark ? !benchmarkId : isRanking ? !query.trim() : !first.trim() || !second.trim())}>
+          <Icon name="compare" size={18} /> {busy ? 'Comparing…' : isBenchmark ? 'Run benchmark replay' : isRanking ? 'Compare rankings' : 'Compare subjects'}
         </button>
       </form>
+      {isBenchmark && benchmarkError && <Status kind="error">{benchmarkError}</Status>}
       {busy && <Status kind="loading">Retrieving comparable evidence…</Status>}
       {!busy && !hasResults && <Empty icon="compare" title="No comparison selected"><p>Run a comparison to see both sets of ranked passages here.</p></Empty>}
-      {!busy && hasResults && mode === 'ranking' && <>
+      {!busy && hasResults && isRanking && <>
         {comparison.query && <p className="comparison-query">Rankings for <strong>{comparison.query}</strong></p>}
         {comparison.replay && <p className="comparison-query">
-          {comparison.replay.turnId
+          {comparison.replay.benchmarkId ? `Replayed benchmark turn ${comparison.replay.priorTurnCount + 1}` : comparison.replay.turnId
             ? `Replayed turn ${comparison.replay.priorTurnCount + 1}`
             : 'Compared a new question'}
           {' · '}{comparison.replay.priorTurnCount} earlier {comparison.replay.priorTurnCount === 1 ? 'turn' : 'turns'} supplied to both engines
+        </p>}
+        <RelevanceSummary relevance={comparison.relevance} />
+        {comparison.replay?.benchmarkId && comparison.replay.rerank !== 'off' && <p className="comparison-query">
+          {finalTrace?.reranking?.available
+            ? `${label(comparison.replay.rerank)} reranking scored ${finalTrace.reranking.evaluated} passages for this question.`
+            : finalTrace?.reranking?.reason ?? 'No passage reranking ran for this question.'}
         </p>}
         <div className="comparison-grid">
           <RankingList title="Midterm baseline" icon="clock" results={baseline} context={[
@@ -112,7 +202,12 @@ export function CompareView({ preset, comparison, busy, onCompare }) {
             ['Weighted terms', finalTrace?.termWeights?.slice(0, 12).map(item => `${item.term} × ${numeric(item.weight, 2)}`).join(', ')],
           ].filter(([, value]) => value)} />
         </div>
-        <RankChanges baseline={baseline} final={final} />
+        <RankChanges baseline={baseline} final={final} relevance={comparison.relevance} />
+        {baselineTrace && <details className="report-card legacy-trace">
+          <summary>Midterm IR Execution Trace</summary>
+          <p>Original engine output for the replayed question, including phrase matches, postings, pruning, fusion, and timing.</p>
+          <pre>{JSON.stringify(baselineTrace, null, 2)}</pre>
+        </details>}
       </>}
       {!busy && hasResults && mode === 'subjects' && <div className="comparison-grid">
         {subjects.map((subject, index) => <RankingList key={`${subject.subject}-${index}`} title={subject.subject} icon={index === 0 ? 'target' : 'layers'} accent={index === 1} results={subject.results ?? []} />)}
@@ -135,7 +230,7 @@ function EvaluationChart({ systems }) {
     <section className="report-card metric-card">
       <h2>Same-turn retrieval metrics</h2>
       <p>Macro-averages across evaluated turns. Unjudged@10 is the share of returned results without a recorded judgment.</p>
-      <div className="chart-legend">{systems.map((system, index) => <span key={system.id}><i className={`series-${index % 3}`} />{system.label ?? label(system.id)}</span>)}</div>
+      <div className="chart-legend">{systems.map((system, index) => <span key={system.id}><i className={`series-${index % 5}`} />{system.label ?? label(system.id)}</span>)}</div>
       <div className="metric-chart">
         {metricDefinitions.map(([key, name]) => (
           systems.some(system => Number.isFinite(system.metrics?.[key])) && <div className="metric-group" key={key}>
@@ -144,7 +239,7 @@ function EvaluationChart({ systems }) {
               const value = system.metrics?.[key];
               if (!Number.isFinite(value)) return null;
               return <div className="metric-bar-row" key={system.id}>
-                <div className="bar-track"><div className={`bar series-${index % 3}`} role="img"
+                <div className="bar-track"><div className={`bar series-${index % 5}`} role="img"
                   aria-label={`${system.label ?? label(system.id)} ${name}: ${numeric(value)}`}
                   style={{ width: `${Math.max(0, Math.min(value, 1)) * 100}%` }} /></div>
                 <code>{numeric(value)}</code>

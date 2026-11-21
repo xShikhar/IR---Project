@@ -65,12 +65,18 @@ export function createInterpretationLookup(articles) {
     return matches.filter(article => article.aliasTerms.length === longest)
       .sort((first, second) => first.title.localeCompare(second.title, 'en'))
       .slice(0, 5)
-      .map(article => ({
+      .map(article => describeInterpretation(article, 'Indexed title'));
+  };
+}
+
+export function describeInterpretation(article, source, evidence = article.docs[0]) {
+  return {
         id: article.id,
         title: article.title,
         terms: article.terms.filter(term => analyze(term).length),
         docCount: article.docs.length,
-        example: article.docs[0].body.trim().replace(/\s+/gu, ' ').slice(0, 180),
-      }));
+        example: evidence.body.trim().replace(/\s+/gu, ' ').slice(0, 180),
+        domain: evidence.domain,
+        source,
   };
 }

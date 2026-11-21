@@ -18,7 +18,7 @@ export function Welcome({ scenarios, onScenario, newTopic, disabled }) {
       <section className="hero">
         <div className="hero-copy">
           <span className="hero-label"><Icon name="sparkle" size={15} /> RESEARCH WORKSPACE</span>
-          <h1>{newTopic ? 'Start a new topic.' : 'Follow the evidence.'}</h1>
+          <h1>{newTopic ? 'Start a new topic.' : <>Follow the <em>evidence.</em></>}</h1>
           <p>{newTopic
             ? 'Ask a question to start a separate topic. You can return to other topics from the sidebar.'
             : 'Explore a topic, ask follow-up questions, and see exactly how each search finds its evidence.'}</p>
@@ -56,7 +56,9 @@ export function Welcome({ scenarios, onScenario, newTopic, disabled }) {
   );
 }
 
-export function Composer({ input, setInput, inputRef, settings, setSettings, semantic, reranker, busy, onSubmit, onPreview, canPreview, scenario, onNextScenario, onDismissScenario }) {
+export function Composer({ input, setInput, inputRef, settings, setSettings, semantic, reranker, busy, onSubmit, onPreview, onExploreTerm, canPreview, scenario, onNextScenario, onDismissScenario }) {
+  const [explorerOpen, setExplorerOpen] = useState(false);
+  const [term, setTerm] = useState('');
   function update(field, value) {
     setSettings(previous => ({ ...previous, [field]: value }));
   }
@@ -75,6 +77,20 @@ export function Composer({ input, setInput, inputRef, settings, setSettings, sem
           <button className="icon-button" type="button" aria-label="Dismiss scenario" onClick={onDismissScenario}><Icon name="close" size={16} /></button>
         </div>
       )}
+      {explorerOpen && <form className="term-explorer" onSubmit={event => {
+        event.preventDefault();
+        if (!term.trim()) return;
+        onExploreTerm(term.trim());
+        setExplorerOpen(false);
+      }}>
+        <div>
+          <label htmlFor="explore-term">Term to explore</label>
+          <input id="explore-term" value={term} maxLength={120} placeholder="e.g. Transformer" disabled={busy}
+            onChange={event => setTerm(event.target.value)} />
+        </div>
+        <button className="button primary" type="submit" disabled={busy || !term.trim()}>Find meanings</button>
+        <button className="icon-button" type="button" aria-label="Close term explorer" onClick={() => setExplorerOpen(false)}><Icon name="close" size={16} /></button>
+      </form>}
       <form className="composer" onSubmit={event => { event.preventDefault(); onSubmit(); }}>
         <textarea
           ref={inputRef}
@@ -109,6 +125,15 @@ export function Composer({ input, setInput, inputRef, settings, setSettings, sem
             </select>
             <Icon name="down" size={13} />
           </label>
+          <label className="control" title="Soft boost favors the topic. Hard lock limits results to its titles when enough candidates remain.">
+            <Icon name="target" size={16} />
+            <span className="visually-hidden">Topic constraint</span>
+            <select disabled={busy} value={settings.topicLock} onChange={event => update('topicLock', event.target.value)}>
+              <option value="soft">Soft boost</option>
+              <option value="hard">Hard lock</option>
+            </select>
+            <Icon name="down" size={13} />
+          </label>
           <button className={`control toggle ${settings.diversity ? 'on' : ''}`} disabled={busy} type="button"
             aria-pressed={settings.diversity} onClick={() => update('diversity', !settings.diversity)}
             title="Favor a wider variety of documents in the ranked list">
@@ -129,6 +154,10 @@ export function Composer({ input, setInput, inputRef, settings, setSettings, sem
             title="Apply these controls to the selected turn without saving a new turn">
             <Icon name="reset" size={16} /> <span>Re-score</span>
           </button>}
+          <button className="control toggle" type="button" aria-expanded={explorerOpen} disabled={busy}
+            onClick={() => setExplorerOpen(previous => !previous)}>
+            <Icon name="branch" size={16} /> <span>Explore meanings</span>
+          </button>
           <button className="send-button" type="submit" disabled={busy || !input.trim()}>
             <span>Search</span><Icon name="arrowUp" size={18} />
           </button>
@@ -165,7 +194,8 @@ function EvidenceCard({ doc, index, feedback, busy, onFeedback, onInspect }) {
           <h3>{doc.title}</h3>
           <div className="result-tags">
             {doc.domain && <span>{domainNames[doc.domain] ?? label(doc.domain)}</span>}
-            {doc.origins?.map(origin => <span key={origin} className={origin === 'pinned' ? 'lime-tag' : ''}>{label(origin)}</span>)}
+            {doc.previouslySeen && <span>Seen in this topic</span>}
+            {doc.origins?.map(origin => <span key={origin} data-origin={origin} className={origin === 'pinned' ? 'lime-tag' : ''}>{label(origin)}</span>)}
           </div>
         </div>
         <button className="score-button" type="button" onClick={() => onInspect(doc)} aria-label={`Inspect ranking score for ${doc.title}`}>
@@ -196,7 +226,39 @@ function EvidenceCard({ doc, index, feedback, busy, onFeedback, onInspect }) {
   );
 }
 
-export function TurnResults({ turns, turn, response, preview, pending, clarification, topic, busy, onTurn, onInterpret, onCancelClarification, onPreview, onQuestionOnly, onRestore, onFeedback, onInspect, onCompare }) {
+function ExecutionFlow({ trace, onTrace }) {
+  const readout = trace.retrieval ?? trace;
+  const phases = [
+    ['state', 'branch', 'Topic', trace.decision?.topicTitle ?? 'Question only'],
+    ['rewrite', 'layers', 'Rewrite', `${readout.termWeights?.length ?? 0} weighted terms`],
+    ['postings', 'chart', 'Retrieval', `${readout.paths?.length ?? 0} ranking paths`],
+    ['profile', 'clock', 'Profile', `${numeric(trace.timings?.totalMs, 0)} ms`],
+  ];
+  return <div className="execution-flow" role="group" aria-label="Open execution trace stages">
+    {phases.map(([id, icon, title, value]) => <button type="button" key={id} onClick={() => onTrace(id)}>
+      <span><Icon name={icon} size={15} />{title}</span><strong title={value}>{value}</strong>
+    </button>)}
+  </div>;
+}
+
+function CustomFocusForm({ term, disabled, onSubmit }) {
+  const [title, setTitle] = useState('');
+  const [keywords, setKeywords] = useState('');
+  return <details className="custom-focus">
+    <summary>Use a custom focus</summary>
+    <form onSubmit={event => {
+      event.preventDefault();
+      if (title.trim() && keywords.trim()) onSubmit({ title: title.trim(), keywords: keywords.trim() });
+    }}>
+      <p>Give “{term}” a label and keywords from the subject you want to search.</p>
+      <label>Focus label<input value={title} maxLength={90} disabled={disabled} onChange={event => setTitle(event.target.value)} placeholder="e.g. Electrical equipment" /></label>
+      <label>Focus keywords<input value={keywords} maxLength={160} disabled={disabled} onChange={event => setKeywords(event.target.value)} placeholder="e.g. voltage electromagnetic induction" /></label>
+      <button className="button compact" type="submit" disabled={disabled || !title.trim() || !keywords.trim()}>Search with custom focus</button>
+    </form>
+  </details>;
+}
+
+export function TurnResults({ turns, turn, response, preview, pending, clarification, topic, busy, onTurn, onInterpret, onCancelClarification, onCustomFocus, onPreview, onQuestionOnly, onRestore, onFeedback, onInspect, onCompare, onTrace }) {
   const results = response?.results;
   const query = pending || clarification?.query || turn?.query;
   const previewActive = Boolean(preview);
@@ -222,11 +284,14 @@ export function TurnResults({ turns, turn, response, preview, pending, clarifica
       {!pending && clarification && (
         <section className="clarification">
           <span className="empty-icon"><Icon name="question" size={22} /></span>
-          <div><h2>{clarification.data.question}</h2><p>Choose the meaning to use for this search.</p></div>
+          <div><h2>{clarification.data.question}</h2><p>{clarification.data.senseQuery
+            ? options.length ? 'Choose an indexed title or a related passage as the focus for this search.' : 'The corpus has no matching meaning suggestions. You can supply a focus or search as written.'
+            : 'Choose the meaning to use for this search.'}</p></div>
           <div className="clarification-options">
             {options.map(option => (
               <button className="interpretation" type="button" key={option.id} disabled={busy} onClick={() => onInterpret(option.id)}>
                 <span><strong>{option.title}</strong>
+                  {option.source && <small className="sense-source">{option.source}{option.domain ? ` · ${domainNames[option.domain] ?? label(option.domain)}` : ''}</small>}
                   {option.example && <small>{option.example}</small>}
                   {option.terms?.length > 0 && <small className="interpretation-terms">{option.terms.join(' · ')}</small>}</span>
                 {option.docCount > 0 && <span className="count-tag">{option.docCount} passages</span>}
@@ -234,13 +299,16 @@ export function TurnResults({ turns, turn, response, preview, pending, clarifica
               </button>
             ))}
             {clarification.data.allowAll && <button className="button compact" type="button" disabled={busy}
-              onClick={() => onInterpret('all-interpretations')}>Search all interpretations</button>}
+              onClick={() => onInterpret('all-interpretations')}>{clarification.data.senseQuery ? 'Search as written' : 'Search all interpretations'}</button>}
+            {clarification.data.senseQuery && <CustomFocusForm key={clarification.data.senseQuery}
+              term={clarification.data.senseQuery} disabled={busy} onSubmit={onCustomFocus} />}
             <button className="text-button cancel-clarification" type="button" onClick={onCancelClarification}>Cancel clarification</button>
           </div>
         </section>
       )}
       {!pending && !clarification && turn && (
         <section aria-labelledby="results-title">
+          {response?.trace && <ExecutionFlow trace={response.trace} onTrace={onTrace} />}
           <div className="section-heading result-heading">
             <div><h2 id="results-title">Ranked evidence</h2>
               <p>{results ? `${results.length} ${results.length === 1 ? 'passage' : 'passages'}${feedbackCount ? ` · ${feedbackCount} topic feedback marks` : ''}` : 'Open a ranking preview for this saved question.'}</p></div>
@@ -249,8 +317,14 @@ export function TurnResults({ turns, turn, response, preview, pending, clarifica
               <button className="button compact" type="button" onClick={onCompare}><Icon name="compare" size={17} /> Compare</button>
             </div>
           </div>
-          {previewActive && <div className="preview-banner"><Icon name="bolt" size={16} /> <span>Ranking preview · Saved conversation unchanged{preview.questionOnly ? ' · Question only' : preview.currentTopic ? ' · Uses current topic feedback' : ''}</span>
+          {previewActive && <div className="preview-banner"><Icon name="bolt" size={16} /> <span>Ranking preview · Saved conversation unchanged{preview.questionOnly ? ' · Question only' : response?.trace?.contextRemoved ? ` · Without ${response.trace.contextRemoved}` : preview.currentTopic ? ' · Uses current topic feedback' : ''}</span>
             {onRestore && <button type="button" className="text-button" onClick={onRestore}>Saved ranking</button>}
+          </div>}
+          {response?.trace?.subjectLock?.requested === 'hard' && <div className={`subject-lock-status ${response.trace.subjectLock.fallback ? 'relaxed' : ''}`}>
+            <Icon name="target" size={16} /><div>
+              <strong>{response.trace.subjectLock.effective === 'hard' ? 'Hard lock active' : response.trace.subjectLock.fallback ? 'Hard lock relaxed to soft boost' : 'Topic lock inactive'}</strong>
+              <p>{response.trace.subjectLock.reason}</p>
+            </div>
           </div>}
           {results && results.map((doc, index) => <EvidenceCard key={doc.docId} doc={doc} index={index} feedback={topic?.feedback} busy={busy} onFeedback={onFeedback} onInspect={onInspect} />)}
           {results?.length === 0 && <Empty icon="file" title="No matching passages"><p>Try more specific terms, or remove the domain filter and re-score.</p></Empty>}

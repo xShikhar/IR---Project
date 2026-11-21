@@ -1,6 +1,8 @@
 import { CONFIG } from '../config/index.js';
-import { analyze } from '../index/normalizer.js';
-import { createInterpretationLookup, groupArticles } from './retrievalArticles.js';
+import { analyze, removeDiacritics } from '../index/normalizer.js';
+import { evaluatePhraseQuery } from '../retrieval/phrase.js';
+import { computeTitleFilteredCandidates } from '../retrieval/titleFilter.js';
+import { createInterpretationLookup, describeInterpretation, groupArticles } from './retrievalArticles.js';
 import { createSemanticRetriever, SEMANTIC_MODEL } from './semantic.js';
 import { createReranker } from './reranker.js';
 
@@ -8,6 +10,38 @@ const MODELS = new Set(['hybrid', 'bm25', 'cosine', 'semantic']);
 const RRF_CONSTANT = 20;
 const round = value => Number(value.toFixed(6));
 const byScore = (first, second) => second.score - first.score || first.docId.localeCompare(second.docId, 'en');
+const diagnosticDepth = 8;
+
+const literalWords = value => removeDiacritics(value).toLowerCase().match(/[a-z0-9_]+/g) ?? [];
+const phraseKey = words => ` ${words.join(' ')} `;
+
+function quotedPhraseFilter(query, index) {
+  const matches = [];
+  let eligible;
+  const phrases = new Set([...query.matchAll(/"([^"]+)"|“([^”]+)”/gu)].map(match => (match[1] ?? match[2]).trim()));
+  for (const phrase of phrases) {
+    const words = literalWords(phrase);
+    if (!words.length) continue;
+    const indexed = analyze(phrase);
+    const positionsAvailable = indexed.length === words.length;
+    const rarest = [...new Set(indexed)].sort((a, b) => (index.dictionary[a]?.df ?? 0) - (index.dictionary[b]?.df ?? 0))[0];
+    const candidates = positionsAvailable
+      ? evaluatePhraseQuery(indexed, index).map(entry => entry.docId)
+      : rarest ? (index.dictionary[rarest]?.postings ?? []).map(entry => entry.docId) : Object.keys(index.docs);
+    const literal = phraseKey(words);
+    const ids = new Set(candidates.filter(id => {
+      const doc = index.docs[id];
+      return doc && [doc.title, doc.body].some(zone => phraseKey(literalWords(zone)).includes(literal));
+    }));
+    matches.push({
+      phrase, strategy: positionsAvailable ? 'Positional intersection' : rarest ? 'Posting scan with stop words' : 'Text scan',
+      candidates: candidates.length, matchingDocCount: ids.size,
+      examples: [...ids].slice(0, 3).map(id => ({ id, title: index.docs[id].title })),
+    });
+    eligible = eligible ? new Set([...eligible].filter(id => ids.has(id))) : ids;
+  }
+  return { matches, eligible };
+}
 
 function documentTerms(doc) {
   return analyze(`${doc.title} ${doc.body}`);
@@ -73,6 +107,30 @@ function scoreLexical(index, terms, model, allowed) {
     }
   }
   return [...byDocument.values()].sort(byScore);
+}
+
+function subjectConstraint(requested, topic, terms, excluded, index, articlesById, eligible) {
+  const trace = { requested, effective: terms.length ? 'soft' : 'none', terms, subject: topic?.title ?? null };
+  if (!terms.length) {
+    return { trace: { ...trace, reason: 'No topic terms are active. Search covers the full eligible corpus.' } };
+  }
+  if (requested === 'soft') {
+    return { trace: { ...trace, reason: 'Topic terms get extra weight across all eligible passages.' } };
+  }
+  const chosenArticle = !analyze((topic.entityTerms ?? []).join(' ')).some(term => excluded.has(term))
+    ? articlesById.get(topic.interpretationId) : null;
+  const titleMatches = chosenArticle
+    ? new Set(chosenArticle.docs.map(doc => doc.docId))
+    : computeTitleFilteredCandidates(terms.map(term => ({ term })), index, { lockMode: 'hard', minCandidates: 0 }).filteredDocIds;
+  const scoped = new Set([...(titleMatches ?? [])].filter(id => eligible(index.docs[id])));
+  const minimum = CONFIG.novelty.lock.minCandidates;
+  const details = { ...trace, candidates: scoped.size, minimum, rule: chosenArticle ? 'Selected article' : 'All topic terms in title' };
+  if (scoped.size < minimum) {
+    return { trace: { ...details, effective: 'soft', fallback: true,
+      reason: `Only ${scoped.size} passages met the lock and active filters. Using soft boost below ${minimum} candidates.` } };
+  }
+  return { allowedIds: scoped, trace: { ...details, effective: 'hard',
+    reason: chosenArticle ? 'Every retrieval path is restricted to the selected article.' : 'Every retrieval path requires all topic terms in the passage title.' } };
 }
 
 function makeDocFilter(domain, exclusions, irrelevant) {
@@ -215,6 +273,7 @@ function extractSnippet(body, terms) {
 
 export function createSearchService(index, { semantic = true, semanticCacheDir } = {}) {
   const { articles, docToArticle } = groupArticles(index.docs);
+  const articlesById = new Map(articles.map(article => [article.id, article]));
   const interpretations = createInterpretationLookup(articles);
   const neural = semantic ? createSemanticRetriever(articles, semanticCacheDir) : null;
   const reranker = createReranker();
@@ -224,32 +283,66 @@ export function createSearchService(index, { semantic = true, semanticCacheDir }
 
   return {
     interpretations,
+    discoverInterpretations(mention) {
+      const tokens = [...new Set(analyze(mention))];
+      if (!tokens.length) return [];
+      const direct = interpretations(mention);
+      if (direct.length >= 2) return direct;
+      const weights = termWeights(index, tokens, [], [], new Set());
+      if (weights.size < tokens.length) return direct;
+      const choices = new Map(direct.map(option => [option.id, option]));
+      const matches = scoreLexical(index, weights, 'bm25', () => true);
+      for (const match of matches) {
+        if (match.terms.length !== tokens.length) continue;
+        const article = docToArticle.get(match.docId);
+        if (!article || choices.has(article.id)) continue;
+        const source = tokens.every(token => article.titleTerms.includes(token)) ? 'Related title' : 'Passage mentions term';
+        const doc = index.docs[match.docId];
+        const option = describeInterpretation(article, source, doc);
+        option.example = extractSnippet(doc.body, weights).snippet || option.example;
+        choices.set(article.id, option);
+        if (choices.size >= 6) break;
+      }
+      return [...choices.values()];
+    },
     status: () => ({ semantic: semanticStatus(), reranker: reranker.status(), articleCount: articles.length, documentCount: docToArticle.size }),
     async search(query, options = {}) {
       const {
         model = 'hybrid', topK = CONFIG.retrieval.topK, topic, feedback = {},
         excludedTerms = [], excludedPhrases = [], diversity = false, domain = null, history = [],
-        rerank = 'off', rawRecovery = true,
+        rerank = 'off', rawRecovery = true, seenDocIds = [], topicLock = 'soft',
       } = options;
       if (typeof query !== 'string') throw new TypeError('query must be a string');
       if (!MODELS.has(model)) throw new RangeError('Unknown retrieval model');
+      if (!['soft', 'hard'].includes(topicLock)) throw new RangeError('Unknown topic lock mode');
       if (!Number.isInteger(topK) || topK < 1 || topK > 100) throw new RangeError('topK must be an integer from 1 to 100');
+      const timings = {};
+      const started = performance.now();
+      const timed = (stage, start) => { timings[stage] = Number(((timings[stage] ?? 0) + performance.now() - start).toFixed(2)); };
       const irrelevant = new Set(feedback.irrelevant ?? []);
       const exclusions = excludedPhrases.map(phrase => analyze(phrase, false).join(' ')).filter(Boolean).map(phrase => ` ${phrase} `);
       const excluded = new Set(excludedTerms.flatMap(phrase => [phrase.toLowerCase(), ...analyze(phrase)]));
-      const allowed = makeDocFilter(domain, exclusions, irrelevant);
-      const relevant = [...new Set(feedback.relevant ?? [])].filter(id => Object.hasOwn(index.docs, id) && allowed(index.docs[id]));
-      const pinned = [...new Set(feedback.pinned ?? [])].filter(id => Object.hasOwn(index.docs, id) && allowed(index.docs[id]));
+      const phraseFilter = quotedPhraseFilter(query, index);
+      const allowedBySettings = makeDocFilter(domain, exclusions, irrelevant);
+      const eligible = doc => (!phraseFilter.eligible || phraseFilter.eligible.has(doc?.docId)) && allowedBySettings(doc);
       const current = analyze(query);
       const entityText = (topic?.entityTerms ?? []).join(' ');
       const entity = analyze(entityText).filter(term => !excluded.has(term));
+      const subject = subjectConstraint(topicLock, topic, [...new Set(entity)], excluded, index, articlesById, eligible);
+      const allowed = doc => (!subject.allowedIds || subject.allowedIds.has(doc?.docId)) && eligible(doc);
+      const relevant = [...new Set(feedback.relevant ?? [])].filter(id => Object.hasOwn(index.docs, id) && allowed(index.docs[id]));
+      const pinned = [...new Set(feedback.pinned ?? [])].filter(id => Object.hasOwn(index.docs, id) && allowed(index.docs[id]));
       const weighted = termWeights(index, current, entity, relevant.map(id => index.docs[id]), excluded, history);
       const raw = termWeights(index, current, [], [], excluded);
       const hasContext = [...weighted.values()].some(item => item.sources.entity || item.sources.feedback || item.sources.history);
       const limit = Math.max(hasContext && !current.some(term => entity.includes(term)) ? 60 : 40, topK * 4);
       const channels = [];
       const lexicalModel = model === 'cosine' ? 'cosine' : 'bm25';
+      timed('queryPreparation', started);
+      let phase = performance.now();
       const lexical = scoreLexical(index, weighted, lexicalModel, allowed);
+      const cosine = model === 'hybrid' ? scoreLexical(index, weighted, 'cosine', allowed) : null;
+      timed('lexicalScoring', phase);
       const articleIds = ids => new Set(ids.map(docId => docToArticle.get(docId)?.id).filter(Boolean));
       const positiveArticles = articleIds(relevant);
       const negativeArticles = articleIds([...irrelevant]);
@@ -260,16 +353,14 @@ export function createSearchService(index, { semantic = true, semanticCacheDir }
         analyze(word).some(term => excluded.has(term)) ? ' ' : word
       )).trim();
       const neuralQuery = query.trim() || filteredEntity;
+      phase = performance.now();
       const affinities = canUseNeural && neuralQuery
         ? await neural.rank(neuralQuery.slice(0, 900), filteredEntity, positiveArticles, negativeArticles)
         : null;
       let effectiveModel = model;
       if (model !== 'semantic' || !affinities) {
         channels.push({ origin: hasContext ? 'context' : 'raw', model: lexicalModel, weight: 1, rows: lexical });
-        if (model === 'hybrid') channels.push({
-          origin: hasContext ? 'context' : 'raw', model: 'cosine', weight: 0.65,
-          rows: scoreLexical(index, weighted, 'cosine', allowed),
-        });
+        if (cosine) channels.push({ origin: hasContext ? 'context' : 'raw', model: 'cosine', weight: 0.65, rows: cosine });
       }
       if (affinities) {
         channels.push({ origin: 'semantic', model: 'semantic', weight: model === 'hybrid' ? 0.75 : 1, rows: rankSemantic(articles, affinities, lexical, allowed) });
@@ -278,11 +369,26 @@ export function createSearchService(index, { semantic = true, semanticCacheDir }
       } else if (model === 'hybrid') {
         effectiveModel = 'lexical-hybrid';
       }
+      if (canUseNeural && neuralQuery) timed('semanticSearch', phase);
+      phase = performance.now();
       if (rawRecovery && (hasContext || model === 'semantic' && affinities) && raw.size) {
         channels.push({ origin: 'raw', model: lexicalModel, weight: 0.20, rows: scoreLexical(index, raw, lexicalModel, allowed) });
+        timed('lexicalScoring', phase);
+      }
+      if (phraseFilter.eligible?.size && !channels.some(channel => channel.rows.length)) {
+        channels.splice(0, channels.length, {
+          origin: 'phrase', model: 'phrase', weight: 1,
+          rows: [...phraseFilter.eligible].filter(id => allowed(index.docs[id])).sort()
+            .map(docId => ({ docId, score: 1, terms: [] })),
+        });
+        effectiveModel = 'phrase';
       }
 
+      phase = performance.now();
       const { fixed, regular } = collectCandidates(channels, limit, relevant, pinned);
+      const fusedCount = fixed.length + regular.length;
+      const overlapCount = regular.filter(row => row.paths.length > 1).length + fixed.filter(row => row.paths.length > 1).length;
+      timed('fusion', phase);
       const reranking = { ...reranker.status(), policy: rerank, evaluated: 0, elapsedMs: 0 };
       if (rerank !== 'off' && regular.length && reranking.available) {
         const started = performance.now();
@@ -312,10 +418,15 @@ export function createSearchService(index, { semantic = true, semanticCacheDir }
           regular.splice(0, candidates.length, ...byFusedRank.map(entry => entry.row));
           reranking.evaluated = candidates.length;
         }
+        timed('reranking', started);
       }
+      phase = performance.now();
       const selected = diversity
         ? selectDiverse(fixed, regular, index, docToArticle, topK)
         : [...fixed, ...regular].slice(0, topK);
+      if (diversity) timed('diversity', phase);
+      phase = performance.now();
+      const seen = new Set(seenDocIds);
       const results = selected.map(row => {
         const { docId, title, body, domain: docDomain } = index.docs[row.docId];
         const origins = new Set(row.paths.map(item => item.origin));
@@ -324,6 +435,7 @@ export function createSearchService(index, { semantic = true, semanticCacheDir }
         if (row.reranking) origins.add('reranked');
         return {
           docId, title, body, domain: docDomain, articleTitle: docToArticle.get(docId)?.title,
+          previouslySeen: seen.has(docId),
           score: round(row.score), ...extractSnippet(body, weighted), origins: [...origins],
           breakdown: {
             scoringModel: channels.length > 1 ? 'Weighted reciprocal rank fusion' : channels[0]?.model ?? lexicalModel,
@@ -337,12 +449,30 @@ export function createSearchService(index, { semantic = true, semanticCacheDir }
           },
         };
       });
+      timed('evidenceSnippets', phase);
+      const postings = [...new Set(current.concat([...weighted.keys()]))].map(term => {
+        const entry = index.dictionary[term];
+        return { term, df: entry?.df ?? 0, idf: Number.isFinite(entry?.bm25Idf) ? round(entry.bm25Idf) : null };
+      });
       return {
         results,
         trace: {
           rawQuery: query, model, requestedModel: model, effectiveModel, effectiveTerms: [...weighted.keys()],
           termWeights: [...weighted.values()], candidateDepth: limit,
-          paths: channels.map(channel => ({ origin: channel.origin, model: channel.model, weight: channel.weight, candidates: Math.min(channel.rows.length, limit) })),
+          paths: channels.map(channel => ({ origin: channel.origin, model: channel.model, weight: channel.weight,
+            candidates: Math.min(channel.rows.length, limit), scored: channel.rows.length,
+            leaders: channel.rows.slice(0, diagnosticDepth).map(row => ({ docId: row.docId, title: index.docs[row.docId].title, score: round(row.score) })),
+          })),
+          postings,
+          subjectLock: subject.trace,
+          phraseMatches: phraseFilter.matches,
+          phraseEligibleCount: phraseFilter.eligible?.size ?? null,
+          fusion: { method: channels.length > 1 ? 'Weighted reciprocal rank fusion' : 'Single-channel ranking', rrfConstant: RRF_CONSTANT, fusedCount, overlapCount },
+          novelty: { seenBefore: seen.size, repeated: results.filter(doc => doc.previouslySeen).length,
+            newPassages: results.filter(doc => !doc.previouslySeen).length,
+            distinctArticles: new Set(results.map(doc => docToArticle.get(doc.docId)?.id ?? doc.docId)).size,
+            relevant: relevant.length, hidden: irrelevant.size, pinned: pinned.length, diversity },
+          timings,
           filters: { domain, excludedTerms, excludedPhrases, irrelevant: [...irrelevant] }, semantic: semanticStatus(), reranking, diversity,
           returnedCount: results.length,
         },

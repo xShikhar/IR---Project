@@ -72,13 +72,15 @@ export function createWorkspace(index, searchService, options = {}) {
         trace: {
           ...result.trace, questionOnly: true,
           decision: { action: 'RAW_QUERY', reason: 'Used only the words in this question.' },
-          timings: { totalMs: Number((performance.now() - started).toFixed(2)) },
+          timings: { ...result.trace?.timings, totalMs: Number((performance.now() - started).toFixed(2)) },
         },
       };
     }
+    if (opts.contextVariant && !opts.preview) throw new Error('Context variants are only available in previews.');
     const candidates=mentions(query);
     const active=state.topics.find(t=>t.id===state.activeTopicId);
-    const choices=interpretationChoices(query);
+    const discovery = opts.senseQuery ? (searchService.discoverInterpretations?.(opts.senseQuery) ?? []) : null;
+    const choices=discovery ?? interpretationChoices(query);
     let selected=null,topic=null,action='CONTINUE',reason='Continued the active topic using its selected subject.';
     if(opts.topicId) {
       topic=state.topics.find(t=>t.id===opts.topicId);
@@ -86,11 +88,28 @@ export function createWorkspace(index, searchService, options = {}) {
       action=topic.id===state.activeTopicId?'CONTINUE':'RESUME';
       reason='Used the topic explicitly selected by the user.';
     }
-    if (opts.interpretationId === 'all-interpretations') {
-      if (choices.length < 2) throw new Error('This question has no competing interpretations.');
-      const title = choices[0].title.replace(/\s*\([^)]*\)\s*$/, '');
-      selected = { title, terms: terms(title) };
-      topic = opts.newTopic ? null : state.topics.findLast(entry => entry.title === title && !entry.interpretationId);
+    if (discovery && !opts.interpretationId && !opts.customSense) {
+      return {
+        results: [], trace: { decision: { action: 'CLARIFY', reason: 'The user asked to explore a term in the corpus.' } },
+        session: snapshot(),
+        clarification: { question: `Explore “${opts.senseQuery}”`, options: discovery, allowAll: true, senseQuery: opts.senseQuery },
+      };
+    }
+    if (opts.customSense) {
+      const keywords = terms(opts.customSense.keywords).filter(term => Object.hasOwn(index.dictionary, term));
+      if (!keywords.length) throw new Error('Choose focus keywords that appear in the corpus.');
+      const title = opts.customSense.title;
+      const id = `custom:${normalize(opts.senseQuery)}:${normalize(title)}:${keywords.join('-')}`;
+      selected = { id, title, terms: keywords };
+      topic = opts.newTopic ? null : state.topics.findLast(entry => entry.interpretationId === id);
+      action = topic ? (topic.id === state.activeTopicId ? 'CONTINUE' : 'RESUME') : 'CREATE';
+      reason = 'Used the focus label and corpus keywords supplied by the user.';
+    } else if (opts.interpretationId === 'all-interpretations') {
+      if (!discovery && choices.length < 2) throw new Error('This question has no competing interpretations.');
+      const title = opts.senseQuery ?? choices[0].title.replace(/\s*\([^)]*\)\s*$/, '');
+      selected = { title, terms: discovery ? [] : terms(title) };
+      topic = opts.newTopic ? null : state.topics.findLast(entry => entry.title === title && !entry.interpretationId &&
+        (!discovery || !entry.entityTerms.length));
       action = topic ? (topic.id === state.activeTopicId ? 'CONTINUE' : 'RESUME') : 'CREATE';
       reason = 'The user chose a broad search across the indexed interpretations.';
     } else if(opts.interpretationId?.startsWith('topic:')) {
@@ -99,7 +118,7 @@ export function createWorkspace(index, searchService, options = {}) {
       action=topic.id===state.activeTopicId?'CONTINUE':'RESUME';
       reason='The user resolved which previous topic this query refers to.';
     } else if(opts.interpretationId) {
-      selected=(searchService.interpretations(query)||[]).find(c=>c.id===opts.interpretationId);
+      selected=(discovery??searchService.interpretations(query)??[]).find(c=>c.id===opts.interpretationId);
       if(!selected)throw new Error('Unknown interpretation.');
       topic=opts.newTopic?null:active&&(active.interpretationId===selected.id||active.title===selected.title)?active:state.topics.findLast(t=>t.interpretationId===selected.id || t.title===selected.title);
       action=topic ? topic.id===state.activeTopicId?'CONTINUE':'RESUME' : 'CREATE';
@@ -163,12 +182,24 @@ export function createWorkspace(index, searchService, options = {}) {
         }
       }
     }
+    const previousAspects = topic.aspects;
     topic.aspects=terms(query).filter(t=>!subjectTerms.has(t)&&!excluded.has(t));
-    const retrieved=await searchService.search(query,{...opts,topic:copy(topic),feedback:copy(topic.feedback),excludedTerms:[...excluded],history});
+    const earlierTurns = state.turns.filter(turn => turn.topicId === topic.id);
+    const seenDocIds = earlierTurns.flatMap(turn => turn.resultIds);
+    const routingMs = Number((performance.now() - started).toFixed(2));
+    const retainedTopic = opts.contextVariant === 'without-topic'
+      ? undefined : copy(topic);
+    const removed = { 'without-topic': 'topic terms and lock', 'without-history': 'earlier aspect terms', 'without-feedback': 'feedback and pins' }[opts.contextVariant];
+    const retrieved=await searchService.search(query,{...opts,topic:retainedTopic,
+      feedback:opts.contextVariant === 'without-feedback' ? {} : copy(topic.feedback),
+      excludedTerms:[...excluded],history:opts.contextVariant === 'without-history' ? [] : history,seenDocIds});
     topic.turnCount++;
     const turn={id:`turn_${state.turns.length+1}`,query,topicId:topic.id,topicTitle:topic.title,decision:action,createdAt:new Date().toISOString(),resultIds:retrieved.results.map(r=>r.docId),options:{model:opts.model||'hybrid',diversity:opts.diversity!==false,domain:opts.domain||null,excludedTerms:[...excluded],newTopic:Boolean(opts.newTopic),...(opts.interpretationId?{interpretationId:opts.interpretationId}: {})}};
     if (opts.topicId) turn.options.topicId = opts.topicId;
+    if (opts.senseQuery) turn.options.senseQuery = opts.senseQuery;
+    if (opts.customSense) turn.options.customSense = opts.customSense;
     if (opts.rerank) turn.options.rerank = opts.rerank;
+    if (opts.topicLock) turn.options.topicLock = opts.topicLock;
     turn.aspects = elaboration.test(query) ? [] : topic.aspects;
     state.turns.push(turn);
     const included=(retrieved.trace?.termWeights||[]).map(t=>({
@@ -176,7 +207,12 @@ export function createWorkspace(index, searchService, options = {}) {
       role:t.sources?.current?'query':t.sources?.history?'history':t.sources?.feedback?'feedback':'entity',
       ...(t.historyTurn ? {sourceTurn:t.historyTurn} : {})
     }));
-    return {...retrieved,trace:{...retrieved.trace,architecture:'v3_branching_memory',decision:{action,reason,topicId:topic.id,topicTitle:topic.title,candidates:candidates.slice(0,4).map(c=>({title:c.title,score:c.score}))},context:{included,excluded:[...excluded],subject:topic.title,aspects:topic.aspects},timings:{...retrieved.trace?.timings,totalMs:Number((performance.now()-started).toFixed(2))}},session:{...copy(state),canUndo:true},clarification:null};
+    return {...retrieved,trace:{...retrieved.trace,architecture:'v3_branching_memory',
+      ...(removed ? { contextRemoved: removed } : {}),
+      decision:{action,reason,topicId:topic.id,topicTitle:topic.title,previousTopic:active?.title,candidates:candidates.slice(0,4).map(c=>({title:c.title,score:c.score}))},
+      context:{included,excluded:[...excluded],subject:topic.title,aspects:topic.aspects,previousAspects,subjectTerms:topic.entityTerms,earlierTurns:earlierTurns.length,interpretationId:topic.interpretationId},
+      timings:{ routing: routingMs,...retrieved.trace?.timings,totalMs:Number((performance.now()-started).toFixed(2)) }
+    },session:{...copy(state),canUndo:true},clarification:null};
   }
 
   return {
@@ -190,6 +226,8 @@ export function createWorkspace(index, searchService, options = {}) {
       const effective={...original?.options,...opts};
       if(original&&effective.newTopic===undefined)effective.newTopic=original.options.newTopic;
       if(!effective.interpretationId&&original?.options.interpretationId)effective.interpretationId=original.options.interpretationId;
+      if(!effective.senseQuery&&original?.options.senseQuery)effective.senseQuery=original.options.senseQuery;
+      if(!effective.customSense&&original?.options.customSense)effective.customSense=original.options.customSense;
       if(effective.topicId&&!next.topics.some(t=>t.id===effective.topicId)&&original?.topicId===effective.topicId)delete effective.topicId;
       const response=await execute(query,effective,next);
       if(!opts.preview&&!response.clarification) {

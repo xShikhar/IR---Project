@@ -10,7 +10,7 @@ const tabs = [
   { id: 'compare', title: 'Compare', icon: 'compare' },
   { id: 'experiments', title: 'Experiments', icon: 'chart' },
 ];
-const defaultSettings = { model: 'hybrid', domain: '', diversity: false, rerank: 'off' };
+const defaultSettings = { model: 'hybrid', domain: '', diversity: false, rerank: 'off', topicLock: 'soft' };
 const snapshot = payload => payload.session ?? payload;
 
 function Header({ view, onNavigate, health, isConnecting, mobilePane, onPane }) {
@@ -102,6 +102,7 @@ export default function App() {
   const [scenario, setScenario] = useState(null);
   const [view, setView] = useState('search');
   const [mobilePane, setMobilePane] = useState(null);
+  const [traceTab, setTraceTab] = useState('state');
   const [settings, setSettings] = useState(defaultSettings);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState('');
@@ -116,6 +117,8 @@ export default function App() {
   const [newTopic, setNewTopic] = useState(false);
   const [document, setDocument] = useState(null);
   const [comparison, setComparison] = useState(null);
+  const [methods, setMethods] = useState(null);
+  const [contextAudit, setContextAudit] = useState(null);
   const [comparePreset, setComparePreset] = useState('');
   const [evaluation, setEvaluation] = useState(null);
   const [evaluationError, setEvaluationError] = useState('');
@@ -184,8 +187,9 @@ export default function App() {
       domain: turn.options.domain ?? defaultSettings.domain,
       diversity: turn.options.diversity ?? defaultSettings.diversity,
       rerank: turn.options.rerank ?? defaultSettings.rerank,
+      topicLock: turn.options.topicLock ?? defaultSettings.topicLock,
     });
-  }, [turn?.id, turn?.options?.model, turn?.options?.domain, turn?.options?.diversity]);
+  }, [turn?.id, turn?.options?.model, turn?.options?.domain, turn?.options?.diversity, turn?.options?.rerank, turn?.options?.topicLock]);
 
   const loadEvaluation = useCallback(async () => {
     setEvaluation(null);
@@ -210,6 +214,8 @@ export default function App() {
     setPreview(null);
     setExclusions([]);
     setDocument(null);
+    setMethods(null);
+    setContextAudit(null);
   }
 
   async function run(name, fn) {
@@ -228,16 +234,18 @@ export default function App() {
     }
   }
 
-  function submit(query = input, interpretationId = undefined, forceNewTopic = false) {
+  function submit(query = input, interpretationId = undefined, forceNewTopic = false, senseOptions = {}) {
     const trimmed = query.trim();
     if (!trimmed || connecting || operation.current) return;
-    const options = interpretationId && clarification ? clarification.options : {
+    const options = (interpretationId || senseOptions.customSense) && clarification ? { ...clarification.options, ...senseOptions } : {
       ...searchOptions(), newTopic: forceNewTopic || newTopic || undefined,
+      ...senseOptions,
     };
 
     run('search', async () => {
       setPending(trimmed);
       setDocument(null);
+      setContextAudit(null);
       try {
         const result = await postAction('search', sessionId, { ...options, query: trimmed, interpretationId });
         setSession(result.session);
@@ -268,6 +276,10 @@ export default function App() {
     });
   }
 
+  function exploreTerm(term) {
+    submit(input.trim() || term, undefined, false, { senseQuery: term });
+  }
+
   function switchTopic(topicId) {
     run('topic', async () => {
       if (topicId !== session.activeTopicId) setSession(snapshot(await postAction('topic', sessionId, { topicId })));
@@ -286,14 +298,16 @@ export default function App() {
   }
 
   async function requestPreview(terms, currentTopic = false, questionOnly = false) {
+    setMethods(null);
     const useCurrent = !questionOnly && (currentTopic || visiblePreview?.currentTopic);
+    const contextVariant = questionOnly || useCurrent ? undefined : visiblePreview?.contextVariant;
     const result = await postAction('preview', sessionId, {
       ...searchOptions(), query: turn.query, topicId: useCurrent ? turn.topicId : undefined, excludedTerms: terms,
       interpretationId: turn.options?.interpretationId,
       turnId: useCurrent ? undefined : turn.id,
-      questionOnly,
+      questionOnly, contextVariant,
     });
-    setPreview({ result, turnId: turn.id, currentTopic: useCurrent, questionOnly });
+    setPreview({ result, turnId: turn.id, currentTopic: useCurrent, questionOnly, contextVariant });
     setExclusions(terms);
     setDocument(null);
   }
@@ -356,14 +370,44 @@ export default function App() {
     submit(item.turns[0], undefined, true);
   }
 
-  function compare(query, subjects) {
+  function compare(query, subjects, midterm, benchmarkId, benchmarkRerank) {
     run('compare', async () => {
       const savedTurn = subjects ? null : turn?.query === query ? turn : session?.turns?.findLast(entry => entry.query === query);
       const result = await postAction('compare', sessionId, {
-        ...(savedTurn ? {} : searchOptions()), query: query || undefined, subjects,
+        ...(savedTurn ? {} : searchOptions()), query: query || undefined, subjects, midterm, benchmarkId, benchmarkRerank,
         turnId: savedTurn?.id,
       });
       setComparison({ query, ...result });
+    });
+  }
+
+  const loadComparisonBenchmarks = useCallback(signal => getResource('comparison-benchmarks', sessionId, signal), [sessionId]);
+
+  function compareMethods() {
+    if (!turn) return;
+    run('methods', async () => {
+      setMethods(await postAction('methods', sessionId, {
+        turnId: turn.id, questionOnly: Boolean(visiblePreview?.questionOnly),
+        ...(visiblePreview ? { excludedTerms: exclusions, topicLock: visiblePreview.result.trace?.subjectLock?.requested } : {}),
+      }));
+    });
+  }
+
+  function runContextAudit() {
+    if (!turn) return;
+    run('context-audit', async () => {
+      setContextAudit(await postAction('context-audit', sessionId, { turnId: turn.id }));
+    });
+  }
+
+  function previewContextVariant(contextVariant) {
+    if (!turn) return;
+    run('preview', async () => {
+      const result = await postAction('preview', sessionId, { turnId: turn.id, contextVariant });
+      setPreview({ result, turnId: turn.id, contextVariant });
+      setExclusions(turn.options.excludedTerms ?? []);
+      setDocument(null);
+      setMethods(null);
     });
   }
 
@@ -393,22 +437,30 @@ export default function App() {
             {showTurn ? <TurnResults turns={turns} turn={turn} response={response} preview={visiblePreview} pending={pending}
               clarification={clarification} topic={newTopic ? null : topic} busy={searchDisabled} onTurn={chooseTurn}
               onInterpret={id => submit(clarification.query, id)} onCancelClarification={() => setClarification(null)}
+              onCustomFocus={customSense => submit(clarification.query, undefined, false, { customSense })}
               onPreview={() => rescore()} onQuestionOnly={() => run('preview', () => requestPreview([], false, true))}
               onRestore={visiblePreview && saved ? clearSelectedResult : null}
               onFeedback={recordFeedback} onInspect={doc => { setDocument(doc); setMobilePane('trace'); }}
+              onTrace={id => { setDocument(null); setTraceTab(id); setMobilePane('trace'); }}
               onCompare={() => { navigate('compare'); if (turn) compare(turn.query); }} />
               : <Welcome scenarios={scenarios} onScenario={startScenario} newTopic={newTopic} disabled={searchDisabled} />}
           </>}
-          {view === 'compare' && <CompareView preset={comparePreset} comparison={comparison} busy={busy === 'compare'} onCompare={compare} />}
+          {view === 'compare' && <CompareView preset={comparePreset} comparison={comparison} busy={busy === 'compare'} onCompare={compare} loadBenchmarks={loadComparisonBenchmarks} />}
           {view === 'experiments' && <ExperimentsView evaluation={evaluation} error={evaluationError} onReload={loadEvaluation} />}
         </div>
         {view === 'search' && <Composer input={input} setInput={setInput} inputRef={inputRef} settings={settings} setSettings={setSettings}
+          onExploreTerm={exploreTerm}
           semantic={semantic} reranker={health?.semantic?.reranker} busy={searchDisabled} onSubmit={() => submit()} onPreview={() => rescore()}
           canPreview={Boolean(turn && !clarification)} scenario={scenario} onDismissScenario={() => setScenario(null)}
           onNextScenario={() => { setInput(scenario.turns[scenario.step]); focusInput(); }} />}
       </main>
-      {view === 'search' && <aside className={`inspector ${mobilePane === 'trace' ? 'drawer-open' : ''}`} aria-label="Trace inspector">
+      {view === 'search' && <aside className={`inspector ${mobilePane === 'trace' ? 'drawer-open' : ''}`} aria-label="IR Execution Trace">
         <WorkspaceInspector trace={currentTrace} semantic={semantic} doc={document} exclusions={exclusions}
+          active={traceTab} setActive={setTraceTab}
+          clarification={clarification?.data}
+          methods={methods?.turnId === turn?.id ? methods : null} onCompareMethods={compareMethods} comparingMethods={busy === 'methods'}
+          contextAudit={contextAudit?.turnId === turn?.id ? contextAudit : null} onRunContextAudit={runContextAudit}
+          onPreviewVariant={previewContextVariant} auditingContext={busy === 'context-audit'}
           disabled={searchDisabled || !turn || Boolean(clarification)} onCloseDoc={() => setDocument(null)} onClose={() => setMobilePane(null)}
           onTerm={term => rescore(exclusions.includes(term) ? exclusions.filter(item => item !== term) : [...exclusions, term])} />
       </aside>}

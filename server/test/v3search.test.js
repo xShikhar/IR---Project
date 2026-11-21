@@ -125,3 +125,25 @@ test('unknown model and invalid depth are rejected', async () => {
   await assert.rejects(service.search('temperature', { model: 'unknown' }), /model/i);
   await assert.rejects(service.search('temperature', { topK: 0 }), /topK/i);
 });
+
+test('hard topic lock scopes retrieval and pins, and falls back after other filters', async () => {
+  const repeatedSections = Array.from({ length: 12 }, (_, i) => ({
+    docId: `telescope-${i}`, title: `Space telescope - Section ${i + 1}`, domain: 'space',
+    body: 'The infrared mirror detects faint background light and dust.',
+  }));
+  const corpus = [...repeatedSections, { docId: 'mirror', title: 'Optical mirrors', domain: 'optics', body: 'Infrared mirror coatings reflect light.' }];
+  const search = createSearchService(buildIndex(corpus), { semantic: false });
+  const settings = {
+    topic: { title: 'Space telescope', entityTerms: ['space', 'telescope'] },
+    feedback: { pinned: ['mirror'] },
+  };
+  const soft = await search.search('infrared mirror', { ...settings, topicLock: 'soft' });
+  assert.equal(soft.results[0].docId, 'mirror');
+  const locked = await search.search('infrared mirror', { ...settings, topicLock: 'hard' });
+  assert.equal(locked.trace.subjectLock.effective, 'hard');
+  assert.equal(locked.trace.subjectLock.candidates, 12);
+  assert.ok(locked.results.length && locked.results.every(doc => doc.docId.startsWith('telescope-')));
+  const fallback = await search.search('infrared mirror', { ...settings, topicLock: 'hard', domain: 'optics' });
+  assert.equal(fallback.trace.subjectLock.fallback, true);
+  assert.deepEqual(fallback.results.map(doc => doc.docId), ['mirror']);
+});
