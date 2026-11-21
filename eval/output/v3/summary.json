@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "split": "test",
+  "semantic": null,
+  "conversationCount": 8,
+  "turnCount": 40,
+  "corpusDocumentCount": 35000,
+  "judgments": {
+    "source": "data/qrels.json",
+    "provenance": "Inherited LLM judgments",
+    "humanValidated": false,
+    "judgedTurns": 40,
+    "missingTurnIds": [],
+    "judgedPairs": 1283,
+    "turnsWithoutPositiveJudgment": 0
+  },
+  "systems": [
+    {
+      "id": "raw_bm25",
+      "label": "Raw BM25",
+      "metrics": {
+        "p5": 0.8800000000000001,
+        "p10": 0.8524999999999998,
+        "ndcg10": 0.7254949431645107,
+        "mrr20": 0.9625,
+        "knownRecall20": 0.49932259471076224,
+        "unjudged10": 0
+      },
+      "coverage": {
+        "retrievedAt10": 400,
+        "judgedAt10": 400,
+        "unjudgedAt10": 0,
+        "turnsEvaluated": 40,
+        "turnsWithResults": 40
+      }
+    },
+    {
+      "id": "midterm",
+      "label": "Midterm TurnTrace",
+      "metrics": {
+        "p5": 0.8950000000000001,
+        "p10": 0.865,
+        "ndcg10": 0.6366218958940387,
+        "mrr20": 0.9375,
+        "knownRecall20": 0.5106061825290517,
+        "unjudged10": 0.005
+      },
+      "coverage": {
+        "retrievedAt10": 400,
+        "judgedAt10": 398,
+        "unjudgedAt10": 2,
+        "turnsEvaluated": 40,
+        "turnsWithResults": 40
+      }
+    },
+    {
+      "id": "turntrace2",
+      "label": "TurnTrace 2 lexical hybrid",
+      "metrics": {
+        "p5": 0.8800000000000001,
+        "p10": 0.8125,
+        "ndcg10": 0.6977819486645103,
+        "mrr20": 0.9800000000000001,
+        "knownRecall20": 0.5340357863297698,
+        "unjudged10": 0.14750000000000002
+      },
+      "coverage": {
+        "retrievedAt10": 400,
+        "judgedAt10": 341,
+        "unjudgedAt10": 59,
+        "turnsEvaluated": 40,
+        "turnsWithResults": 40
+      }
+    }
+  ],
+  "behavior": {
+    "provenance": "Synthetic behavior assertions",
+    "passed": 3,
+    "total": 3,
+    "cases": [
+      {
+        "id": "topic-return",
+        "title": "Return to the Webb telescope",
+        "passed": true
+      },
+      {
+        "id": "mercury-choice",
+        "title": "Choose an interpretation of Mercury",
+        "passed": true
+      },
+      {
+        "id": "feedback-undo",
+        "title": "Preview and undo passage feedback",
+        "passed": true
+      }
+    ]
+  },
+  "pooling": {
+    "pairs": 61
+  },
+  "artifacts": {
+    "perTurn": "per_turn.csv",
+    "unjudgedPool": "unjudged_pool.csv"
+  }
+}

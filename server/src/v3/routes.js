@@ -1,0 +1,110 @@
+import express from 'express';
+import fs from 'node:fs';
+import path from 'node:path';
+import { createWorkspace } from './workspace.js';
+import { createSearchService } from './search.js';
+import { executeConversationalTurn } from '../api/traceAssembly.js';
+import { ContextState } from '../conversation/contextState.js';
+import { CONFIG } from '../config/index.js';
+
+const domains=new Set(['cs_ai','space_physics','history_civilization','biology_medicine']);
+const models=new Set(['hybrid','bm25','cosine','semantic']);
+export function createV3Router(index) {
+  const router=express.Router();
+  const search=index?createSearchService(index):null;
+  const sessions=new Map();
+  const error=(message,status=400)=>Object.assign(new Error(message),{status});
+  function entry(req) {
+    if(!index)throw error('The frozen corpus index is not loaded. Run npm run build:index.',503);
+    const id=req.body&&Object.hasOwn(req.body,'sessionId')?req.body.sessionId:Object.hasOwn(req.query,'sessionId')?req.query.sessionId:'default';
+    if(typeof id!=='string'||!/^[a-zA-Z0-9_-]{1,128}$/.test(id))throw error('Invalid sessionId. Use up to 128 letters, digits, underscores or hyphens.');
+    const now=Date.now();
+    for(const [key,value] of sessions)if(now-value.touched>6*60*60*1000)sessions.delete(key);
+    if(!sessions.has(id)) {
+      if(sessions.size>=200)throw error('Too many active sessions. Please reset an existing session.',429);
+      sessions.set(id,{workspace:createWorkspace(index,search,{id}),touched:now,pending:Promise.resolve()});
+    }
+    const value=sessions.get(id);value.touched=now;return value;
+  }
+  function options(body={}) {
+    if(body.model!==undefined&&!models.has(body.model))throw error('Unknown retrieval model.');
+    if(body.domain&&!domains.has(body.domain))throw error('Unknown domain filter.');
+    if(body.diversity!==undefined&&typeof body.diversity!=='boolean')throw error('diversity must be a boolean.');
+    if(body.newTopic!==undefined&&typeof body.newTopic!=='boolean')throw error('newTopic must be a boolean.');
+    if(body.excludedTerms!==undefined&&(!Array.isArray(body.excludedTerms)||body.excludedTerms.length>80||body.excludedTerms.some(t=>typeof t!=='string'||t.length>100)))throw error('excludedTerms must be an array of up to 80 short strings.');
+    for(const key of ['topicId','interpretationId','turnId'])if(body[key]!==undefined&&(typeof body[key]!=='string'||body[key].length>250))throw error(`Invalid ${key}.`);
+    return {model:body.model||'hybrid',diversity:body.diversity===true,domain:body.domain||null,topK:10,topicId:body.topicId,interpretationId:body.interpretationId,newTopic:body.newTopic,excludedTerms:body.excludedTerms||[],turnId:body.turnId};
+  }
+  const query=value=>{if(typeof value!=='string'||!value.trim()||value.length>2000)throw error('query must contain 1 to 2,000 characters.');return value.trim();};
+  function route(method,url,handler) {
+    router[method](url,(req,res)=>{
+      let current;try{current=entry(req);}catch(e){res.status(e.status||400).json({error:e.message});return;}
+      const work=current.pending.catch(()=>{}).then(()=>handler(req,res,current.workspace));
+      current.pending=work.catch(()=>{});
+      work.catch(e=>{console.error(`[TurnTrace v3] ${url}:`,e.message);if(!res.headersSent)res.status(e.status||400).json({error:e.message});});
+    });
+  }
+  route('get','/session',(_req,res,w)=>res.json(w.snapshot()));
+  route('delete','/session',(_req,res,w)=>{const state=w.reset();sessions.delete(state.id);res.json(state);});
+  route('post','/search',async(req,res,w)=>res.json(await w.turn(query(req.body.query),options(req.body))));
+  route('post','/preview',async(req,res,w)=>{
+    const state=w.snapshot();
+    const turn=req.body.turnId?state.turns.find(t=>t.id===req.body.turnId):req.body.query?state.turns.findLast(t=>t.query===req.body.query&&(!req.body.topicId||t.topicId===req.body.topicId)):state.turns.at(-1);
+    const inherited={...turn?.options};
+    if(!req.body.turnId)delete inherited.newTopic;
+    res.json(await w.turn(query(req.body.query||turn?.query),{...options({...inherited,...req.body}),preview:true}));
+  });
+  route('post','/topic',(req,res,w)=>res.json(w.selectTopic(req.body.topicId)));
+  route('post','/feedback',(req,res,w)=>res.json(w.feedback(req.body.docId,req.body.action,req.body.topicId)));
+  route('post','/undo',(_req,res,w)=>res.json(w.undo()));
+  route('post','/compare',async(req,res,w)=>{
+    const state=w.snapshot();
+    const selected=req.body.turnId?state.turns.find(t=>t.id===req.body.turnId):req.body.query?state.turns.findLast(t=>t.query===req.body.query):state.turns.at(-1);
+    const q=query(req.body.query||(req.body.subjects?'overview':selected?.query));
+    const opts=options({...selected?.options,...req.body});
+    const ctx=new ContextState();
+    const selectedIndex=req.body.turnId?state.turns.findIndex(t=>t.id===req.body.turnId):-1;
+    if(req.body.turnId&&selectedIndex<0)throw error('Unknown turn.');
+    const history=selectedIndex>=0?state.turns.slice(0,selectedIndex):[...state.turns];
+    if(selectedIndex<0&&history.at(-1)?.query===q)history.pop();
+    for(const turn of history)await executeConversationalTurn(turn.query,ctx,index,{topK:10,applySeenPenalty:true});
+    const baseline=await executeConversationalTurn(q,ctx,index,{topK:10,applySeenPenalty:true});
+    const latest=state.turns.at(-1);
+    const final=await w.turn(q,{...opts,preview:true,...(req.body.turnId?{turnId:req.body.turnId}:latest?.query===q?{turnId:latest.id}: {})});
+    const ranks=new Map(baseline.results.map((r,i)=>[r.docId,i+1]));
+    const rankChanges=final.results.map((r,i)=>({docId:r.docId,title:r.title,baselineRank:ranks.get(r.docId)||null,finalRank:i+1,delta:ranks.has(r.docId)?ranks.get(r.docId)-(i+1):null}));
+    let subjects;
+    if(req.body.subjects!==undefined) {
+      if(!Array.isArray(req.body.subjects)||req.body.subjects.length!==2)throw error('Provide exactly two subjects.');
+      subjects=await Promise.all(req.body.subjects.map(async subject=>{
+        subject=query(subject);const r=await search.search(`${subject} ${q}`,{...opts,topic:{title:subject,entityTerms:[]},feedback:{relevant:[],irrelevant:[],pinned:[]}});
+        return {subject,...r};
+      }));
+    }
+    res.json({query:q,baseline,final,rankChanges,subjects,session:w.snapshot()});
+  });
+  route('get','/scenarios',(_req,res)=>{
+    const file=path.join(CONFIG.paths.dataDir,'v3_scenarios.json');
+    if(fs.existsSync(file)) {const payload=JSON.parse(fs.readFileSync(file,'utf8'));res.json(Array.isArray(payload)?payload:payload.scenarios||[]);}
+    else res.json([{id:'return-to-topic',title:'Switch topics. Keep your place.',description:'Explore JWST, visit CRISPR, and return to the telescope.',turns:['What is the James Webb Space Telescope?','Where is its orbit located?','Explain CRISPR gene editing.','What are its limitations?','Back to JWST, what instruments does it carry?']},{id:'mercury',title:'One word. Different worlds.',description:'Resolve an ambiguous subject and follow its meaning.',turns:['Tell me about Mercury','How does it affect the nervous system?']}]);
+  });
+  route('get','/evaluation',(_req,res)=>{
+    const base=path.join(CONFIG.paths.evalOutputDir,'v3');
+    const semantic=fs.existsSync(path.join(base,'semantic','summary.json'));
+    const file=path.join(base,semantic?'semantic':'','summary.json');
+    res.json(fs.existsSync(file)?{available:true,reportVariant:semantic?'semantic':'lexical',...JSON.parse(fs.readFileSync(file,'utf8'))}:{available:false,summary:'Run npm run eval:v3 to generate measured results. No metrics have been fabricated.'});
+  });
+  route('get','/evaluation/:artifact',(req,res)=>{
+    if(!['summary.json','per_turn.csv','unjudged_pool.csv'].includes(req.params.artifact))throw error('Unknown evaluation artifact.',404);
+    const base=path.join(CONFIG.paths.evalOutputDir,'v3');
+    const directory=fs.existsSync(path.join(base,'semantic','summary.json'))?path.join(base,'semantic'):base;
+    const file=path.join(directory,req.params.artifact);
+    if(!fs.existsSync(file))throw error('Run npm run eval:v3 first.',404);
+    res.download(file);
+  });
+  route('get','/export',(_req,res,w)=>{
+    res.setHeader('Content-Disposition','attachment; filename="turntrace-session.json"');
+    res.json({application:'TurnTrace 2',exportedAt:new Date().toISOString(),session:w.snapshot(),retrieval:search.status(),provenance:{repository:'https://github.com/xShikhar/IR---MidTerm-Assignment',commit:'d0022603ebd9181f21e0e406cfd4a2d72af79104'}});
+  });
+  return {router,status:()=>search?.status()||{available:false,reason:'Index not loaded.'}};
+}

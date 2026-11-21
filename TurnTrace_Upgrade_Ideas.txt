@@ -1,0 +1,183 @@
+TURNTRACE 2 - IDEAS FOR TEAM DISCUSSION
+=====================================
+
+PROPOSED TITLE
+TurnTrace 2: Inspectable Conversational Search with Branching Memory,
+Interactive Disambiguation, and Hybrid Retrieval
+
+MAIN IDEA
+Extend our working midterm into a search system that maintains multiple topics,
+returns to earlier topics, asks useful clarification questions, and accepts user
+corrections. These interactions must change actual retrieval, with a comparison
+screen showing the difference from the midterm.
+
+WHY EXTEND THE MIDTERM?
+We already have a working 35,000-passage corpus, classical IR implementations,
+conversation handling, a trace inspector, and an evaluation framework. The final
+project can build on these while addressing real weaknesses: one active topic,
+ambiguous entity terms, restrictive title filtering, and limited user control.
+
+PROPOSED IMPROVEMENTS
+---------------------
+
+1. BRANCHING CONVERSATION MEMORY [CORE]
+Keep separate topic memories instead of replacing one active entity/aspect state.
+Each topic stores its subject, aspects, turns, feedback, and retrieved passages.
+Route new queries to an existing topic, a new topic, or clarification.
+
+Demo: Ask about JWST, switch to CRISPR, then say "Back to the telescope - what
+instruments does it carry?" The system resumes JWST without CRISPR contamination.
+Visible: Topic sidebar, active-topic indicator, and clickable topic history.
+Evaluate: Topic-routing accuracy, resumption accuracy, and retrieval on resumed
+topics. Measure automatic routing separately from manual topic selection.
+
+2. INTERACTIVE DISAMBIGUATION [CORE]
+Offer meaningful interpretation choices when retrieved evidence supports multiple
+senses. Store the user's choice and apply it to later queries in that topic.
+
+Demo: "Tell me about Mercury" -> choose planet or chemical element -> "How does
+it affect the nervous system?" after choosing the element.
+Visible: Interpretation cards with example passages and a reversible selection.
+Implementation: Use indexed article identities and content, not hardcoded demos.
+Evaluate: Necessary versus unnecessary clarification, and retrieval before/after
+selection. Report user-assisted results separately from automatic results.
+
+3. REAL WEIGHTED CONTEXT AND EDITABLE QUERY REWRITING [CORE]
+Pass structured term weights into scoring instead of only appending terms to a
+query string. Give current words, subject terms, selected history, and feedback
+separate weights. Record the source turn and reason for every included term.
+
+Demo: Changing the question from orbit to mirror size removes obsolete orbit
+context. The user can remove an incorrect carried term and retrieve again.
+Visible: "Context used" panel with included/excluded terms and explanations.
+Evaluate: Raw query versus appended context versus weighted context.
+Code finding: The existing rewriter records weights, but the retrieval boundary
+currently receives the rewritten string rather than those explicit weights.
+
+4. FAIR MIDTERM-VERSUS-FINAL REPLAY [CORE]
+Replay the same conversation through isolated copies of the midterm and final
+systems. Compare topic decisions, rewritten queries, results, and rank movement.
+
+Visible: Side-by-side comparison with judged relevance where available.
+Implementation: Use identical saved starting states. Rescoring must not append
+another turn or modify memory; the current rescore route changes session state.
+Value: Makes the substantial extension obvious and supports reproducibility.
+
+5. HYBRID RETRIEVAL WITH A RECOVERY PATH [NEXT]
+Combine BM25 and pretrained semantic retrieval using Reciprocal Rank Fusion.
+Retrieve using both the current query and its contextual form, so incorrect
+history cannot block every retrieval route. Prefer soft context preferences
+over mandatory title filtering unless the user explicitly requests a constraint.
+
+Demo: Retrieve relevant passages despite different wording; inspect which search
+method contributed each result.
+Evaluate: BM25, semantic retrieval, fusion, and fusion without the recovery path.
+Dependency: Confirm course permission for pretrained models and cache embeddings.
+
+6. TOPIC-SCOPED RELEVANCE FEEDBACK [NEXT]
+Add Relevant, Wrong topic, Pin, and Undo controls. Use Rocchio feedback for the
+vector-space route, keeping feedback inside the topic where it was provided.
+
+Demo: Reject electrical transformer passages while researching neural
+transformers; show the revised query representation and rankings.
+Evaluate: Before/after a fixed feedback budget, including performance on unseen
+results. Clearly distinguish simulated feedback from actual user interaction.
+
+7. RELEVANCE-AWARE RESULT DIVERSITY [AFTER CORE]
+Replace the blanket penalty for previously shown document IDs with MMR-style
+diversification that balances relevance and redundancy within the active topic.
+Allow repeated evidence when the user revisits or asks to explain a passage.
+
+Visible: "Best matches" versus "Explore different information" controls.
+Evaluate: Retrieval relevance, relevant unseen results, and result redundancy.
+Important: More unseen documents alone does not prove a better search experience.
+
+8. EXTRACTIVE EVIDENCE SNIPPETS [AFTER CORE]
+Highlight a matching sentence or short sentence window, preserving full passage
+access and source metadata. Explain the matched subject and current aspect.
+
+Visible: Users can immediately inspect why a passage addresses their question.
+Scope: Start with extracts; generated answers require separate grounding checks.
+
+9. TWO-SUBJECT COMPARISON WORKSPACE [STRETCH]
+Resolve both subjects, retrieve evidence independently, and display passages
+under shared requested aspects rather than blending everything into one list.
+
+Demo: "Compare JWST and Hubble for infrared observations."
+Visible: Two columns with source evidence and missing information marked.
+Evaluate: Relevant evidence coverage for each subject.
+
+10. ACTIONABLE EXPLANATIONS [INTEGRATE WITH CORE UI]
+Extend the trace inspector with readable decisions and controls to change topic,
+remove context, undo clarification, or retry without history.
+
+Example: "Resumed JWST; removed the old aspect orbit; searched with BM25 and
+semantic retrieval." Each correction must cause an observable retrieval change.
+Also replace shared score thresholds for relevance labels: cosine, BM25, and RRF
+scores have different scales and are not calibrated relevance probabilities.
+
+WHAT COUNTS AS OUR CONTRIBUTION?
+--------------------------------
+The existing IR algorithms, topic modeling ideas, and clarification tasks are
+established. Our contribution would be the implemented combination of persistent
+topic memory, user-confirmed interpretation, weighted retrieval, and reversible
+correction, supported by experiments. Do not claim these individual methods are
+new inventions or claim performance gains before measuring them.
+
+POSSIBLE CONTRIBUTION STATEMENT
+"We extend TurnTrace with persistent topic memory and user-confirmed
+interpretation, coupled with weighted hybrid retrieval and reversible context
+correction. We evaluate retrieval quality, topic resumption, clarification
+behavior, and interaction cost against the frozen midterm system."
+Use this wording only for components we actually implement and evaluate.
+
+EXPERIMENT PLAN
+---------------
+Preserve the midterm implementation and dataset as a frozen baseline.
+Add held-out conversations for topic return, ambiguous references, meaning shifts,
+corrections, paraphrases, and comparisons. Human-review routing labels and pooled
+retrieval judgments. Judge newly retrieved documents rather than relying solely
+on the old relevance pool. Keep evaluation answers out of runtime search.
+
+Compare: Midterm; BM25 without history; weighted context; branching memory;
+clarification; hybrid retrieval; feedback and diversity in separate ablations.
+Metrics: nDCG@10, Recall@k, MRR, routing macro-F1, clarification errors, latency,
+and relevant discovery. Report automatic and user-assisted settings separately.
+Use conversation-level resampling for uncertainty because turns are related.
+Reconcile the existing PDF and saved CSV baseline values before final reporting.
+
+RECOMMENDED BUILD ORDER
+-----------------------
+First: Branching memory + actionable clarification + weighted context + replay.
+Next: Hybrid retrieval + topic-scoped feedback.
+Then: Diversity + snippets.
+Stretch: Comparison workspace + neural reranking.
+
+A focused first prototype is a 2-3 hour target, not a guarantee for the entire
+list. Model setup, reliable experiments, human judgments, and the research report
+require additional time. Prioritize complete, visible behavior over many toggles.
+
+TEAM DISCUSSION POINTS
+----------------------
+1. Do we agree on the four core changes as the final project's main identity?
+2. Are pretrained embedding/reranking models permitted by the course?
+3. Who will review conversations and relevance judgments?
+4. How will we divide memory/backend, retrieval, UI/demo, and evaluation/report?
+5. Which optional features fit after the core works and has been evaluated?
+
+SELECTED BACKGROUND READING
+---------------------------
+History-Aware Conversational Dense Retrieval:
+https://aclanthology.org/2024.findings-acl.792/
+QuReTeC - Query Resolution for Conversational Search:
+https://arxiv.org/abs/2005.11723
+ClariQ:
+https://github.com/aliannejadi/ClariQ
+Sentence-BERT:
+https://aclanthology.org/D19-1410/
+Rocchio relevance feedback:
+https://nlp.stanford.edu/IR-book/html/htmledition/the-rocchio-algorithm-for-relevance-feedback-1.html
+MMR diversity-based reranking:
+https://doi.org/10.1145/290941.291025
+InSCIt - Mixed-Initiative Information-Seeking Conversations:
+https://aclanthology.org/2023.tacl-1.27/

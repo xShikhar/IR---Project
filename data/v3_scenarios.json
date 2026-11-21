@@ -1,0 +1,39 @@
+[
+  {
+    "id": "topic-return",
+    "title": "Return to the Webb telescope",
+    "description": "Open a telescope topic, switch to CRISPR, and resume the original telescope topic.",
+    "turns": [
+      "James Webb Space Telescope",
+      "What about its mirror?",
+      "CRISPR gene editing",
+      "Back to the James Webb Space Telescope. What instruments does it use?"
+    ],
+    "expectedTopics": [
+      "James Webb Space Telescope",
+      "James Webb Space Telescope",
+      "CRISPR",
+      "James Webb Space Telescope"
+    ],
+    "labelSource": "Synthetic behavior assertion"
+  },
+  {
+    "id": "mercury-choice",
+    "title": "Choose an interpretation of Mercury",
+    "description": "Search for Mercury, then choose the chemical element from the corpus-backed interpretations.",
+    "turns": ["Mercury"],
+    "expectedTopics": ["Mercury (element)"],
+    "labelSource": "Synthetic behavior assertion"
+  },
+  {
+    "id": "feedback-undo",
+    "title": "Preview and undo passage feedback",
+    "description": "Pin a telescope passage, preview another search, then undo the pin.",
+    "turns": [
+      "James Webb Space Telescope",
+      "What about its mirror?"
+    ],
+    "expectedTopics": ["James Webb Space Telescope", "James Webb Space Telescope"],
+    "labelSource": "Synthetic behavior assertion"
+  }
+]

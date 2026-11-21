@@ -1,0 +1,60 @@
+EVIDENCELENS - PROJECT IDEA FOR TEAM DISCUSSION
+
+THE IDEA
+Build a search tool that helps users find research evidence for a scientific
+claim. Instead of only showing paper titles, it highlights the exact candidate
+evidence sentences inside research abstracts and explains why they were ranked.
+
+EXAMPLE EXPERIENCE
+A user enters a claim such as "Treatment X reduces the risk of condition Y."
+The tool finds relevant papers, highlights passages discussing that relationship,
+and lets the user mark papers as useful or irrelevant to improve the search.
+The user can compare keyword, semantic, and combined search results side by side.
+
+HOW IT WORKS
+1. BM25 searches for matching words, with separate title and abstract weights.
+2. Semantic search finds related evidence even when the wording is different.
+3. Reciprocal Rank Fusion combines the two result lists.
+4. Sentence retrieval identifies candidate evidence within the selected papers.
+5. An adaptive policy examines more candidates when retrieval signals are weak
+   or disagree, and fewer when the signals are strong.
+6. User relevance feedback can refine the query using the Rocchio algorithm.
+   A pretrained cross-encoder reranker is an additional option if setup permits.
+
+WHAT MAKES OUR VERSION INTERESTING
+Our proposed contribution is an adaptive search policy that uses agreement
+between retrieval methods AND sentence evidence signals to decide how much
+reranking work to perform. We will test whether this saves computation while
+preserving evidence recall. These are retrieval signals, not proof of truth.
+The algorithms and scientific evidence-search task already exist; our claim is
+about the particular policy, integration, and measured results, not inventing
+scientific fact-checking or adaptive retrieval.
+
+DATASET AND EVALUATION
+Use SciFact: approximately 1,400 expert-written claims and 5,183 abstracts,
+with annotated evidence sentences and support/refutation labels.
+Compare BM25, semantic search, fusion, and fixed versus adaptive reranking.
+Measure Precision@k, Recall@k, MRR, nDCG, sentence-selection precision/recall/F1,
+latency, and candidates reranked. Keep evaluation labels out of runtime search.
+Use a documented split of public labels; official test labels are hidden.
+
+DEMO AND SCOPE
+Core demo: enter a claim -> inspect ranked papers and highlighted evidence ->
+compare retrieval methods -> view ranking explanations and evaluation charts.
+Prioritize the working retrieval pipeline, adaptive policy, and comparison UI.
+Add feedback and reranking as time permits. Automatic support/refute prediction
+is a stretch feature requiring a validated model; similarity cannot supply it.
+A focused prototype is the 2-3 hour target; experiments and report verification
+need additional time. Improvements must be measured rather than promised.
+
+WHY CHOOSE THIS OVER EXTENDING TURNTRACE?
+It gives us a fresh application, public expert evidence annotations, visible
+new interactions, and a focused research question for the report and viva.
+
+BACKGROUND
+SciFact paper: https://aclanthology.org/2020.emnlp-main.609/
+Dataset/code: https://github.com/allenai/scifact
+
+TEAM DECISION
+Do we agree on evidence retrieval as the core project, and are pretrained
+embedding/reranking models allowed under the course rules?
