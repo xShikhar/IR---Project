@@ -53,6 +53,7 @@ Original `/api/chat` and midterm modules remain intact; new behavior lives in `s
 6. Ask about Webb's mirror, then ask **Tell me more.** In **Query terms**, inspect the inherited mirror term and its source turn. Remove and restore it to preview the ranking with and without that context.
 7. Use **Compare / Two subjects** for separate JWST and Hubble evidence.
 8. Open **Experiments** for measured metrics and judgment coverage.
+9. Set **Passage reranking** to **Adaptive reranking**, then re-score. In **Ranking paths**, see how many candidates were scored. Inspect a result to see its rank before reranking and its cross-encoder score.
 
 Detailed walkthrough: [docs/DEMO.md](docs/DEMO.md).
 
@@ -60,9 +61,12 @@ Detailed walkthrough: [docs/DEMO.md](docs/DEMO.md).
 
 ```sh
 npm run prepare:semantic
+npm run prepare:reranker
 ```
 
 The CPU model is a pinned quantized `Xenova/all-MiniLM-L6-v2`, run through Transformers.js. Each article group has a 384-dimensional embedding based on its title and leading passages. Semantic article evidence is combined with passage-level lexical scoring. This is **article-level semantic retrieval**, not an embedding of every passage or a trained conversational model.
+
+Use **Passage reranking** to compare the first-stage ranking with a local MS MARCO cross-encoder. Fixed depth scores up to 32 passages. Adaptive depth scores up to 12 when the lexical and semantic rankings share at least four of their first eight passages, and up to 32 otherwise. The inspector shows the candidate count, elapsed time, and per-passage scores.
 
 Preparation downloads the model once to `data/raw/semantic/`; runtime uses local files only. Missing dependencies/cache are reported with an explicit lexical fallback. Corpus fingerprints reject mismatched vectors. The prepared cache is included in the submission.
 
@@ -72,6 +76,8 @@ Preparation downloads the model once to `data/raw/semantic/`; runtime uses local
 npm test
 npm run eval:v3
 npm run eval:v3 -- --semantic
+npm run eval:v3 -- --ablation
+npm run eval:review
 ```
 
 The default v3 evaluation compares raw BM25, the frozen midterm and the new lexical ensemble on identical TEST turns. The semantic run adds the neural hybrid and writes separate results. Outputs include nDCG@10, Precision@k, MRR@20, recall against known judgments, unjudged@10, per-turn CSVs and a blind review pool. Synthetic behavior checks are separate from relevance metrics.

@@ -64,6 +64,18 @@ export function createWorkspace(index, searchService, options = {}) {
     if(typeof query!=='string'||!query.trim()) throw new Error('A non-empty query is required.');
     query=query.trim();
     const started=performance.now();
+    if (opts.questionOnly) {
+      if (!opts.preview) throw new Error('Question-only search is available in a ranking preview.');
+      const result = await searchService.search(query, { ...opts, topic: undefined, feedback: {}, history: [] });
+      return {
+        ...result, clarification: null,
+        trace: {
+          ...result.trace, questionOnly: true,
+          decision: { action: 'RAW_QUERY', reason: 'Used only the words in this question.' },
+          timings: { totalMs: Number((performance.now() - started).toFixed(2)) },
+        },
+      };
+    }
     const candidates=mentions(query);
     const active=state.topics.find(t=>t.id===state.activeTopicId);
     const choices=interpretationChoices(query);
@@ -74,7 +86,14 @@ export function createWorkspace(index, searchService, options = {}) {
       action=topic.id===state.activeTopicId?'CONTINUE':'RESUME';
       reason='Used the topic explicitly selected by the user.';
     }
-    if(opts.interpretationId?.startsWith('topic:')) {
+    if (opts.interpretationId === 'all-interpretations') {
+      if (choices.length < 2) throw new Error('This question has no competing interpretations.');
+      const title = choices[0].title.replace(/\s*\([^)]*\)\s*$/, '');
+      selected = { title, terms: terms(title) };
+      topic = opts.newTopic ? null : state.topics.findLast(entry => entry.title === title && !entry.interpretationId);
+      action = topic ? (topic.id === state.activeTopicId ? 'CONTINUE' : 'RESUME') : 'CREATE';
+      reason = 'The user chose a broad search across the indexed interpretations.';
+    } else if(opts.interpretationId?.startsWith('topic:')) {
       topic=state.topics.find(t=>`topic:${t.id}`===opts.interpretationId);
       if(!topic)throw new Error('Unknown topic interpretation.');
       action=topic.id===state.activeTopicId?'CONTINUE':'RESUME';
@@ -90,7 +109,7 @@ export function createWorkspace(index, searchService, options = {}) {
       topic=active;reason='Preserved the interpretation previously confirmed by the user.';
     }
     if(!topic&&!selected&&choices.length>1) {
-      return {results:[],trace:{decision:{action:'CLARIFY',reason:'The subject has multiple indexed interpretations.'}},session:{...copy(state),canUndo:undoStack.length>0},clarification:{question:'Which interpretation do you mean?',options:choices}};
+      return {results:[],trace:{decision:{action:'CLARIFY',reason:'The subject has multiple indexed interpretations.'}},session:{...copy(state),canUndo:undoStack.length>0},clarification:{question:'Which interpretation do you mean?',options:choices,allowAll:true}};
     }
     if(!topic&&!selected&&!opts.newTopic&&active&&candidates.length===0&&state.topics.length>1&&/\b(it|its|they|their|them|this|that)\b/i.test(query)&&/\b(back|earlier|previous|first|other)\b/i.test(query)) {
       return {results:[],trace:{decision:{action:'CLARIFY',reason:'The reference could point to a previous topic.'}},session:{...copy(state),canUndo:undoStack.length>0},clarification:{question:'Which conversation topic should I use?',options:state.topics.map(t=>({id:`topic:${t.id}`,title:t.title,terms:t.entityTerms,docCount:0,example:`${t.turnCount} previous turns`}))}};
@@ -148,6 +167,8 @@ export function createWorkspace(index, searchService, options = {}) {
     const retrieved=await searchService.search(query,{...opts,topic:copy(topic),feedback:copy(topic.feedback),excludedTerms:[...excluded],history});
     topic.turnCount++;
     const turn={id:`turn_${state.turns.length+1}`,query,topicId:topic.id,topicTitle:topic.title,decision:action,createdAt:new Date().toISOString(),resultIds:retrieved.results.map(r=>r.docId),options:{model:opts.model||'hybrid',diversity:opts.diversity!==false,domain:opts.domain||null,excludedTerms:[...excluded],newTopic:Boolean(opts.newTopic),...(opts.interpretationId?{interpretationId:opts.interpretationId}: {})}};
+    if (opts.topicId) turn.options.topicId = opts.topicId;
+    if (opts.rerank) turn.options.rerank = opts.rerank;
     turn.aspects = elaboration.test(query) ? [] : topic.aspects;
     state.turns.push(turn);
     const included=(retrieved.trace?.termWeights||[]).map(t=>({

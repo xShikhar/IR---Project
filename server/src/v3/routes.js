@@ -30,10 +30,12 @@ export function createV3Router(index) {
     if(body.model!==undefined&&!models.has(body.model))throw error('Unknown retrieval model.');
     if(body.domain&&!domains.has(body.domain))throw error('Unknown domain filter.');
     if(body.diversity!==undefined&&typeof body.diversity!=='boolean')throw error('diversity must be a boolean.');
+    if(body.rerank!==undefined&&!['off','fixed','adaptive'].includes(body.rerank))throw error('Unknown reranking policy.');
+    if(body.questionOnly!==undefined&&typeof body.questionOnly!=='boolean')throw error('questionOnly must be a boolean.');
     if(body.newTopic!==undefined&&typeof body.newTopic!=='boolean')throw error('newTopic must be a boolean.');
     if(body.excludedTerms!==undefined&&(!Array.isArray(body.excludedTerms)||body.excludedTerms.length>80||body.excludedTerms.some(t=>typeof t!=='string'||t.length>100)))throw error('excludedTerms must be an array of up to 80 short strings.');
     for(const key of ['topicId','interpretationId','turnId'])if(body[key]!==undefined&&(typeof body[key]!=='string'||body[key].length>250))throw error(`Invalid ${key}.`);
-    return {model:body.model||'hybrid',diversity:body.diversity===true,domain:body.domain||null,topK:10,topicId:body.topicId,interpretationId:body.interpretationId,newTopic:body.newTopic,excludedTerms:body.excludedTerms||[],turnId:body.turnId};
+    return {model:body.model||'hybrid',diversity:body.diversity===true,rerank:body.rerank??'off',domain:body.domain||null,topK:10,topicId:body.topicId,interpretationId:body.interpretationId,newTopic:body.newTopic,excludedTerms:body.excludedTerms||[],turnId:body.turnId,questionOnly:body.questionOnly===true};
   }
   const query=value=>{if(typeof value!=='string'||!value.trim()||value.length>2000)throw error('query must contain 1 to 2,000 characters.');return value.trim();};
   function route(method,url,handler) {
@@ -59,18 +61,21 @@ export function createV3Router(index) {
   route('post','/undo',(_req,res,w)=>res.json(w.undo()));
   route('post','/compare',async(req,res,w)=>{
     const state=w.snapshot();
-    const selected=req.body.turnId?state.turns.find(t=>t.id===req.body.turnId):req.body.query?state.turns.findLast(t=>t.query===req.body.query):state.turns.at(-1);
-    const q=query(req.body.query||(req.body.subjects?'overview':selected?.query));
+    const suppliedQuery=req.body.query===undefined?undefined:query(req.body.query);
+    const selectedIndex=req.body.turnId
+      ? state.turns.findIndex(turn=>turn.id===req.body.turnId)
+      : req.body.subjects ? -1
+        : suppliedQuery===undefined ? state.turns.length-1
+          : state.turns.findLastIndex(turn=>turn.query===suppliedQuery);
+    if(req.body.turnId&&selectedIndex<0)throw error('Unknown turn.');
+    const selected=state.turns[selectedIndex];
+    const q=suppliedQuery??query(req.body.subjects?'overview':selected?.query);
     const opts=options({...selected?.options,...req.body});
     const ctx=new ContextState();
-    const selectedIndex=req.body.turnId?state.turns.findIndex(t=>t.id===req.body.turnId):-1;
-    if(req.body.turnId&&selectedIndex<0)throw error('Unknown turn.');
-    const history=selectedIndex>=0?state.turns.slice(0,selectedIndex):[...state.turns];
-    if(selectedIndex<0&&history.at(-1)?.query===q)history.pop();
+    const history=selected?state.turns.slice(0,selectedIndex):state.turns;
     for(const turn of history)await executeConversationalTurn(turn.query,ctx,index,{topK:10,applySeenPenalty:true});
     const baseline=await executeConversationalTurn(q,ctx,index,{topK:10,applySeenPenalty:true});
-    const latest=state.turns.at(-1);
-    const final=await w.turn(q,{...opts,preview:true,...(req.body.turnId?{turnId:req.body.turnId}:latest?.query===q?{turnId:latest.id}: {})});
+    const final=await w.turn(q,{...opts,preview:true,turnId:selected?.id});
     const ranks=new Map(baseline.results.map((r,i)=>[r.docId,i+1]));
     const rankChanges=final.results.map((r,i)=>({docId:r.docId,title:r.title,baselineRank:ranks.get(r.docId)||null,finalRank:i+1,delta:ranks.has(r.docId)?ranks.get(r.docId)-(i+1):null}));
     let subjects;
@@ -81,7 +86,8 @@ export function createV3Router(index) {
         return {subject,...r};
       }));
     }
-    res.json({query:q,baseline,final,rankChanges,subjects,session:w.snapshot()});
+    res.json({query:q,baseline,final,rankChanges,subjects,session:w.snapshot(),
+      replay:{turnId:selected?.id??null,priorTurnCount:history.length}});
   });
   route('get','/scenarios',(_req,res)=>{
     const file=path.join(CONFIG.paths.dataDir,'v3_scenarios.json');
@@ -92,7 +98,24 @@ export function createV3Router(index) {
     const base=path.join(CONFIG.paths.evalOutputDir,'v3');
     const semantic=fs.existsSync(path.join(base,'semantic','summary.json'));
     const file=path.join(base,semantic?'semantic':'','summary.json');
-    res.json(fs.existsSync(file)?{available:true,reportVariant:semantic?'semantic':'lexical',...JSON.parse(fs.readFileSync(file,'utf8'))}:{available:false,summary:'Run npm run eval:v3 to generate measured results. No metrics have been fabricated.'});
+    const readSummary = folder => {
+      const summary = path.join(base, folder, 'summary.json');
+      return fs.existsSync(summary) ? JSON.parse(fs.readFileSync(summary, 'utf8')) : null;
+    };
+    res.json(fs.existsSync(file)?{available:true,reportVariant:semantic?'semantic':'lexical',...JSON.parse(fs.readFileSync(file,'utf8')),
+      ablation:readSummary('ablation'),review:readSummary('review')
+    }:{available:false,summary:'Run npm run eval:v3 to generate measured results. No metrics have been fabricated.'});
+  });
+  route('get','/evaluation/ablation/:artifact',(req,res)=>{
+    if(!['summary.json','per_turn.csv','unjudged_pool.csv'].includes(req.params.artifact))throw error('Unknown evaluation artifact.',404);
+    const file=path.join(CONFIG.paths.evalOutputDir,'v3','ablation',req.params.artifact);
+    if(!fs.existsSync(file))throw error('Run npm run eval:v3 -- --ablation first.',404);
+    res.download(file);
+  });
+  route('get','/evaluation/review/pool.csv',(_req,res)=>{
+    const file=path.join(CONFIG.paths.evalOutputDir,'v3','review','pool.csv');
+    if(!fs.existsSync(file))throw error('Run npm run eval:review first.',404);
+    res.download(file);
   });
   route('get','/evaluation/:artifact',(req,res)=>{
     if(!['summary.json','per_turn.csv','unjudged_pool.csv'].includes(req.params.artifact))throw error('Unknown evaluation artifact.',404);

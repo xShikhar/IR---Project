@@ -89,13 +89,20 @@ while i<len(lines):
         story.append(Paragraph(inline(' '.join(parts)),styles['Paper']))
     i+=1
 
-summary_file=ROOT/'eval/output/v3/summary.json'
+summary_file = ROOT / 'eval/output/v3/ablation/summary.json'
+if not summary_file.exists():
+    summary_file = ROOT / 'eval/output/v3/summary.json'
 if summary_file.exists():
     summary=json.loads(summary_file.read_text(encoding='utf-8'))
-    systems=summary.get('systems',[])
+    chart_names = {
+        'raw_bm25': 'Raw BM25', 'midterm': 'Midterm TurnTrace',
+        'turntrace2': 'Lexical hybrid', 'turntrace2_full': 'Full hybrid',
+        'rerank_fixed': 'Fixed reranking', 'rerank_adaptive': 'Adaptive reranking',
+    }
+    systems = [system for system in summary.get('systems', []) if system['id'] in chart_names]
     if systems:
-        story.append(Paragraph('Measured retrieval comparison',styles['Section']))
-        story.append(Paragraph('Macro-averages on the inherited TEST judgments. Unjudged results limit interpretation; these are not independently human-validated effectiveness estimates.',styles['Paper']))
+        chart_heading = Paragraph('Measured retrieval comparison', styles['Section'])
+        chart_caption = Paragraph('Macro-averages on the inherited TEST judgments. Missing judgments limit interpretation.', styles['Paper'])
         drawing=Drawing(465,230)
         chart=VerticalBarChart();chart.x=45;chart.y=55;chart.width=390;chart.height=145
         metrics=['ndcg10','p10','knownRecall20']
@@ -104,12 +111,15 @@ if summary_file.exists():
         chart.categoryAxis.labels.fontName='Body';chart.categoryAxis.labels.fontSize=9
         chart.valueAxis.valueMin=0;chart.valueAxis.valueMax=1;chart.valueAxis.valueStep=.2
         chart.valueAxis.labels.fontName='Body';chart.valueAxis.labels.fontSize=8
-        palette=['#94a3b8','#818cf8','#4338ca','#65a30d']
+        palette=['#6b778d','#6d60b8','#3c2e8a','#397179','#177054','#ad541b']
         for n in range(len(systems)):chart.bars[n].fillColor=colors.HexColor(palette[n%len(palette)])
         chart.groupSpacing=13;chart.barSpacing=2;drawing.add(chart)
-        for n,s in enumerate(systems):
-            drawing.add(String(45,33-n*12,s.get('label',s['id']),fontName='Body',fontSize=8,fillColor=colors.HexColor(palette[n%len(palette)])))
-        story.append(drawing)
+        for n, system in enumerate(systems):
+            x = 45 + (n // 3) * 162
+            y = 31 - (n % 3) * 12
+            drawing.add(String(x, y, chart_names[system['id']], fontName='BodyBold', fontSize=8,
+                               fillColor=colors.HexColor(palette[n])))
+        story.append(KeepTogether([chart_heading, chart_caption, drawing]))
 
 def chrome(canvas,doc):
     canvas.saveState();canvas.setFont('Body',8);canvas.setFillColor(colors.HexColor('#64748b'))

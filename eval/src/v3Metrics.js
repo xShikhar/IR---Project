@@ -47,10 +47,10 @@ export function summarizeRankings(records) {
   };
 }
 
-export function collectUnjudgedPool({ queryId, topic, query, history }, rankings, qrels) {
+export function collectUnjudgedPool({ queryId, topic, query, history }, rankings, qrels, depth = 10) {
   const unjudged = new Map();
   for (const ranking of rankings) {
-    for (const result of ranking.slice(0, 10)) {
+    for (const result of ranking.slice(0, depth)) {
       if (!Object.hasOwn(qrels, result.docId)) unjudged.set(result.docId, result);
     }
   }

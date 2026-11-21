@@ -1,0 +1,27 @@
+[
+  {
+    "id": "review_search",
+    "topic": "Web ranking and the Turing test",
+    "turns": ["How does PageRank use incoming links?", "Tell me more.", "Switch to the Turing test. What does it measure?", "Back to PageRank. What role does the damping factor play?"]
+  },
+  {
+    "id": "review_space",
+    "topic": "Apollo and Voyager spacecraft",
+    "turns": ["What was the role of the Apollo Lunar Module?", "How did it get back to orbit?", "Switch to Voyager 1. How is it powered?", "Back to the Apollo Lunar Module. Tell me about its landing gear."]
+  },
+  {
+    "id": "review_history",
+    "topic": "Printing and trade",
+    "turns": ["How did movable type work in the printing press?", "Can you explain more?", "Switch to the Silk Road. What goods travelled along it?", "Back to the printing press. What was printed first?"]
+  },
+  {
+    "id": "review_physics",
+    "topic": "Black holes and telescopes",
+    "turns": ["How is an event horizon defined?", "How so?", "Switch to the Hubble Space Telescope. Where does it orbit?", "Back to the event horizon. When can light escape?"]
+  },
+  {
+    "id": "review_language",
+    "topic": "Word embeddings and Shannon entropy",
+    "turns": ["How are Word2vec embeddings trained before use?", "Why?", "Switch to entropy in information theory. How does it measure uncertainty?", "Back to Word2vec. Compare skip-gram and CBOW."]
+  }
+]

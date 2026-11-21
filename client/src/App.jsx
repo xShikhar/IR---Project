@@ -10,7 +10,7 @@ const tabs = [
   { id: 'compare', title: 'Compare', icon: 'compare' },
   { id: 'experiments', title: 'Experiments', icon: 'chart' },
 ];
-const defaultSettings = { model: 'hybrid', domain: '', diversity: false };
+const defaultSettings = { model: 'hybrid', domain: '', diversity: false, rerank: 'off' };
 const snapshot = payload => payload.session ?? payload;
 
 function Header({ view, onNavigate, health, isConnecting, mobilePane, onPane }) {
@@ -183,6 +183,7 @@ export default function App() {
       model: turn.options.model ?? defaultSettings.model,
       domain: turn.options.domain ?? defaultSettings.domain,
       diversity: turn.options.diversity ?? defaultSettings.diversity,
+      rerank: turn.options.rerank ?? defaultSettings.rerank,
     });
   }, [turn?.id, turn?.options?.model, turn?.options?.domain, turn?.options?.diversity]);
 
@@ -284,14 +285,15 @@ export default function App() {
     setNotice('');
   }
 
-  async function requestPreview(terms, currentTopic = false) {
-    const useCurrent = currentTopic || visiblePreview?.currentTopic;
+  async function requestPreview(terms, currentTopic = false, questionOnly = false) {
+    const useCurrent = !questionOnly && (currentTopic || visiblePreview?.currentTopic);
     const result = await postAction('preview', sessionId, {
       ...searchOptions(), query: turn.query, topicId: useCurrent ? turn.topicId : undefined, excludedTerms: terms,
       interpretationId: turn.options?.interpretationId,
       turnId: useCurrent ? undefined : turn.id,
+      questionOnly,
     });
-    setPreview({ result, turnId: turn.id, currentTopic: useCurrent });
+    setPreview({ result, turnId: turn.id, currentTopic: useCurrent, questionOnly });
     setExclusions(terms);
     setDocument(null);
   }
@@ -356,9 +358,10 @@ export default function App() {
 
   function compare(query, subjects) {
     run('compare', async () => {
+      const savedTurn = subjects ? null : turn?.query === query ? turn : session?.turns?.findLast(entry => entry.query === query);
       const result = await postAction('compare', sessionId, {
-        ...searchOptions(), query: query || undefined, subjects,
-        turnId: !subjects && turn?.query === query ? turn.id : undefined,
+        ...(savedTurn ? {} : searchOptions()), query: query || undefined, subjects,
+        turnId: savedTurn?.id,
       });
       setComparison({ query, ...result });
     });
@@ -390,7 +393,8 @@ export default function App() {
             {showTurn ? <TurnResults turns={turns} turn={turn} response={response} preview={visiblePreview} pending={pending}
               clarification={clarification} topic={newTopic ? null : topic} busy={searchDisabled} onTurn={chooseTurn}
               onInterpret={id => submit(clarification.query, id)} onCancelClarification={() => setClarification(null)}
-              onPreview={() => rescore()} onRestore={visiblePreview && saved ? clearSelectedResult : null}
+              onPreview={() => rescore()} onQuestionOnly={() => run('preview', () => requestPreview([], false, true))}
+              onRestore={visiblePreview && saved ? clearSelectedResult : null}
               onFeedback={recordFeedback} onInspect={doc => { setDocument(doc); setMobilePane('trace'); }}
               onCompare={() => { navigate('compare'); if (turn) compare(turn.query); }} />
               : <Welcome scenarios={scenarios} onScenario={startScenario} newTopic={newTopic} disabled={searchDisabled} />}
@@ -399,7 +403,7 @@ export default function App() {
           {view === 'experiments' && <ExperimentsView evaluation={evaluation} error={evaluationError} onReload={loadEvaluation} />}
         </div>
         {view === 'search' && <Composer input={input} setInput={setInput} inputRef={inputRef} settings={settings} setSettings={setSettings}
-          semantic={semantic} busy={searchDisabled} onSubmit={() => submit()} onPreview={() => rescore()}
+          semantic={semantic} reranker={health?.semantic?.reranker} busy={searchDisabled} onSubmit={() => submit()} onPreview={() => rescore()}
           canPreview={Boolean(turn && !clarification)} scenario={scenario} onDismissScenario={() => setScenario(null)}
           onNextScenario={() => { setInput(scenario.turns[scenario.step]); focusInput(); }} />}
       </main>

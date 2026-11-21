@@ -27,6 +27,9 @@ test('a researcher resumes a topic, previews rankings, provides feedback and com
   await page.getByRole('button',{name:'Pin passage',exact:true}).first().click();
   await expect(page.getByRole('button',{name:'Pin passage',exact:true}).first()).toHaveAttribute('aria-pressed','true');
   await page.screenshot({path:`${screenshots}/workspace.png`,fullPage:true});
+  await page.getByLabel('Browse conversation turns').selectOption('turn_1');
+  await page.getByRole('main').getByRole('button',{name:'Compare',exact:true}).click();
+  await expect(page.getByText('Replayed turn 1 · 0 earlier turns supplied to both engines')).toBeVisible();
   await page.getByRole('navigation',{name:'Workspace views'}).getByRole('button',{name:'Compare'}).click();
   await page.getByLabel('Search question').fill('What instruments does JWST carry?');
   await page.getByRole('button',{name:'Compare rankings'}).click();
@@ -61,6 +64,10 @@ test('an elaboration shows its earlier aspect and allows a reversible correction
   await expect(page.getByText('History · turn 2', { exact: true })).toHaveCount(0);
   await page.locator('button[title="Restore mirror"]').click();
   await expect(page.getByText('History · turn 2', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Question only', exact: true }).click();
+  await expect(page.locator('.preview-banner')).toContainText('Question only');
+  await expect(page.getByText('History · turn 2', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Browse conversation turns').locator('option')).toHaveCount(3);
 });
 
 test('two-subject comparison and measured experiments are accessible',async({page})=>{
@@ -76,4 +83,19 @@ test('two-subject comparison and measured experiments are accessible',async({pag
   await page.getByRole('navigation',{name:'Workspace views'}).getByRole('button',{name:'Experiments'}).click();
   await expect(page.getByRole('heading',{name:'Experiments',exact:true})).toBeVisible();
   await expect(page.getByRole('heading',{name:/Same-turn retrieval metrics|Evaluation report unavailable/})).toBeVisible();
+});
+
+test('neural ranking controls expose passage scores and evaluation results', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Follow the evidence.' })).toBeVisible();
+  const health = await (await page.request.get('/api/health')).json();
+  test.skip(!health.semantic?.reranker?.available, 'The optional passage model has not been prepared');
+  await page.getByLabel('Passage reranking').selectOption('adaptive');
+  await ask(page, 'James Webb Space Telescope');
+  await expect(page.getByText(/Adaptive · \d+ passages scored/)).toBeVisible();
+  await page.getByRole('button', { name: /Inspect ranking score/ }).first().click();
+  await expect(page.getByText('Cross-encoder logit', { exact: true })).toBeVisible();
+  await page.getByRole('navigation', { name: 'Workspace views' }).getByRole('button', { name: 'Experiments' }).click();
+  await expect(page.getByRole('heading', { name: 'How each retrieval change performed' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Download blind review pool' })).toBeVisible();
 });

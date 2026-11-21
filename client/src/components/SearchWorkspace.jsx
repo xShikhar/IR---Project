@@ -56,7 +56,7 @@ export function Welcome({ scenarios, onScenario, newTopic, disabled }) {
   );
 }
 
-export function Composer({ input, setInput, inputRef, settings, setSettings, semantic, busy, onSubmit, onPreview, canPreview, scenario, onNextScenario, onDismissScenario }) {
+export function Composer({ input, setInput, inputRef, settings, setSettings, semantic, reranker, busy, onSubmit, onPreview, canPreview, scenario, onNextScenario, onDismissScenario }) {
   function update(field, value) {
     setSettings(previous => ({ ...previous, [field]: value }));
   }
@@ -114,6 +114,16 @@ export function Composer({ input, setInput, inputRef, settings, setSettings, sem
             title="Favor a wider variety of documents in the ranked list">
             <Icon name="sliders" size={16} /> <span>Diversity</span>
           </button>
+          <label className="control" title={reranker?.reason || 'Reorder leading passages using the local cross-encoder'}>
+            <Icon name="layers" size={16} />
+            <span className="visually-hidden">Passage reranking</span>
+            <select disabled={busy || !reranker?.available} value={settings.rerank} onChange={event => update('rerank', event.target.value)}>
+              <option value="off">Reranking off</option>
+              <option value="fixed">Fixed-depth reranking</option>
+              <option value="adaptive">Adaptive reranking</option>
+            </select>
+            <Icon name="down" size={13} />
+          </label>
           {canPreview && <button className="control toggle preview-control" type="button" disabled={busy} onClick={onPreview}
             aria-label="Re-score"
             title="Apply these controls to the selected turn without saving a new turn">
@@ -164,9 +174,13 @@ function EvidenceCard({ doc, index, feedback, busy, onFeedback, onInspect }) {
       </div>
       <p className="snippet"><MarkedSnippet text={expanded ? doc.body : snippet} terms={doc.highlights} /></p>
       <div className="evidence-actions">
-        {doc.body && doc.body !== snippet && <button className="text-button inline-button" type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
-          {expanded ? 'Collapse passage' : 'Read passage'} <Icon name={expanded ? 'close' : 'down'} size={14} />
-        </button>}
+        <div className="evidence-links">
+          {doc.body && doc.body !== snippet && <button className="text-button inline-button" type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+            {expanded ? 'Collapse passage' : 'Read passage'} <Icon name={expanded ? 'close' : 'down'} size={14} />
+          </button>}
+          {doc.articleTitle && <a className="text-button" href={`https://en.wikipedia.org/wiki/${encodeURIComponent(doc.articleTitle.replaceAll(' ', '_'))}`}
+            target="_blank" rel="noreferrer">Wikipedia article</a>}
+        </div>
         <div className="feedback-actions" aria-label="Evidence feedback">
           <button type="button" className={`icon-button ${isRelevant ? 'pressed' : ''}`} title="Mark relevant" aria-label="Mark relevant"
             disabled={busy} aria-pressed={Boolean(isRelevant)} onClick={() => onFeedback(doc, isRelevant ? 'unrelevant' : 'relevant')}><Icon name="relevant" size={17} /></button>
@@ -182,7 +196,7 @@ function EvidenceCard({ doc, index, feedback, busy, onFeedback, onInspect }) {
   );
 }
 
-export function TurnResults({ turns, turn, response, preview, pending, clarification, topic, busy, onTurn, onInterpret, onCancelClarification, onPreview, onRestore, onFeedback, onInspect, onCompare }) {
+export function TurnResults({ turns, turn, response, preview, pending, clarification, topic, busy, onTurn, onInterpret, onCancelClarification, onPreview, onQuestionOnly, onRestore, onFeedback, onInspect, onCompare }) {
   const results = response?.results;
   const query = pending || clarification?.query || turn?.query;
   const previewActive = Boolean(preview);
@@ -219,6 +233,8 @@ export function TurnResults({ turns, turn, response, preview, pending, clarifica
                 <Icon name="arrow" size={17} />
               </button>
             ))}
+            {clarification.data.allowAll && <button className="button compact" type="button" disabled={busy}
+              onClick={() => onInterpret('all-interpretations')}>Search all interpretations</button>}
             <button className="text-button cancel-clarification" type="button" onClick={onCancelClarification}>Cancel clarification</button>
           </div>
         </section>
@@ -228,9 +244,12 @@ export function TurnResults({ turns, turn, response, preview, pending, clarifica
           <div className="section-heading result-heading">
             <div><h2 id="results-title">Ranked evidence</h2>
               <p>{results ? `${results.length} ${results.length === 1 ? 'passage' : 'passages'}${feedbackCount ? ` · ${feedbackCount} topic feedback marks` : ''}` : 'Open a ranking preview for this saved question.'}</p></div>
-            <button className="button compact" type="button" onClick={onCompare}><Icon name="compare" size={17} /> Compare</button>
+            <div className="result-heading-actions">
+              <button className="button compact" type="button" disabled={busy || preview?.questionOnly} onClick={onQuestionOnly}>Question only</button>
+              <button className="button compact" type="button" onClick={onCompare}><Icon name="compare" size={17} /> Compare</button>
+            </div>
           </div>
-          {previewActive && <div className="preview-banner"><Icon name="bolt" size={16} /> <span>Ranking preview · Saved conversation unchanged{preview.currentTopic ? ' · Uses current topic feedback' : ''}</span>
+          {previewActive && <div className="preview-banner"><Icon name="bolt" size={16} /> <span>Ranking preview · Saved conversation unchanged{preview.questionOnly ? ' · Question only' : preview.currentTopic ? ' · Uses current topic feedback' : ''}</span>
             {onRestore && <button type="button" className="text-button" onClick={onRestore}>Saved ranking</button>}
           </div>}
           {results && results.map((doc, index) => <EvidenceCard key={doc.docId} doc={doc} index={index} feedback={topic?.feedback} busy={busy} onFeedback={onFeedback} onInspect={onInspect} />)}

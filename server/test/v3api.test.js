@@ -28,6 +28,11 @@ describe('v3 API integration',()=>{
     const element=r.body.clarification.options.find(x=>/\(element\)/i.test(x.title));assert.ok(element);
     const chosen=await post('search',{query:'Mercury',sessionId:'api_v3_mercury',model:'bm25',interpretationId:element.id});
     assert.equal(chosen.body.session.topics[0].title,'Mercury (element)');
+    const broad = await post('search', { query: 'Mercury', sessionId: 'api_v3_mercury_all', interpretationId: 'all-interpretations' });
+    assert.equal(broad.status, 200);
+    assert.equal(broad.body.clarification, null);
+    assert.equal(broad.body.session.topics[0].interpretationId, null);
+    assert.ok(broad.body.results.length);
   });
   it('comparison does not add conversational turns',async()=>{
     const r=await post('compare',{query:'What is the James Webb Space Telescope?',sessionId:'api_v3_a',model:'bm25'});
@@ -47,5 +52,20 @@ describe('v3 API integration',()=>{
     await post('search',{sessionId:'api_v3_filter',query:'James Webb Space Telescope',model:'bm25',domain:'space_physics'});
     const r=await post('preview',{sessionId:'api_v3_filter',domain:null});
     assert.equal(r.status,200);assert.equal(r.body.trace.filters.domain,null);
+  });
+  it('replays an earlier matching question without including later turns or changing the session', async () => {
+    const sessionId = 'api_v3_replay';
+    const query = 'What about its mirror?';
+    await post('search', { sessionId, query: 'James Webb Space Telescope', model: 'bm25' });
+    await post('search', { sessionId, query, model: 'bm25' });
+    const before = await post('compare', { sessionId, query });
+    assert.equal(before.status, 200);
+    const later = await post('search', { sessionId, query: 'Explain CRISPR gene editing.', model: 'cosine' });
+    const after = await post('compare', { sessionId, query });
+    assert.equal(after.status, 200);
+    assert.deepEqual(after.body.replay, { turnId: 'turn_2', priorTurnCount: 1 });
+    assert.deepEqual(after.body.baseline.results, before.body.baseline.results);
+    assert.deepEqual(after.body.final.results, before.body.final.results);
+    assert.deepEqual(after.body.session, later.body.session);
   });
 });

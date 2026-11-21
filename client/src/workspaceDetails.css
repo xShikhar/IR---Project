@@ -83,6 +83,8 @@
 .snippet { margin: 7px 0 3px; color: #4c5568; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-line; }
 mark { padding: 0 1px; border-radius: 2px; background: #e4f4a6; color: #2b390e; }
 .evidence-actions { display: flex; align-items: center; justify-content: space-between; gap: 5px; }
+.evidence-links { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.evidence-links a { text-decoration: underline; text-underline-offset: 3px; }
 .inline-button { font-size: 11px; }
 .feedback-actions { display: flex; gap: 1px; margin-left: auto; }
 .feedback-actions .icon-button { height: 28px; width: 27px; }
@@ -124,6 +126,11 @@ mark { padding: 0 1px; border-radius: 2px; background: #e4f4a6; color: #2b390e; 
 .compare-form .button { justify-self: start; }
 .subject-inputs, .comparison-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 9px; }
 .comparison-query { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+.result-heading-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.comparison-context { margin: 0; padding: 12px 16px; border-top: 1px solid var(--line); font-size: 12px; overflow-wrap: anywhere; }
+.comparison-context dt { color: var(--muted); margin-bottom: 4px; }
+.comparison-context dd { margin: 0 0 8px; }
+.comparison-context dd:last-child { margin-bottom: 0; }
 .ranking-list { background: #fff; border: 1px solid var(--line); border-radius: 9px; min-width: 0; }
 .ranking-header { display: flex; align-items: center; gap: 8px; padding: 9px; border-bottom: 1px solid var(--line); }
 .ranking-header .empty-icon { background: #f0f1f5; color: #555f74; width: 36px; height: 36px; }

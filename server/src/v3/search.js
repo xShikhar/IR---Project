@@ -2,6 +2,7 @@ import { CONFIG } from '../config/index.js';
 import { analyze } from '../index/normalizer.js';
 import { createInterpretationLookup, groupArticles } from './retrievalArticles.js';
 import { createSemanticRetriever, SEMANTIC_MODEL } from './semantic.js';
+import { createReranker } from './reranker.js';
 
 const MODELS = new Set(['hybrid', 'bm25', 'cosine', 'semantic']);
 const RRF_CONSTANT = 20;
@@ -142,7 +143,7 @@ function collectCandidates(channels, limit, relevant, pinned) {
 function selectDiverse(fixed, regular, index, docToArticle, limit) {
   const selected = fixed.slice(0, limit);
   const termsByDoc = new Map();
-  const bestScore = Math.max(regular[0]?.score ?? 0, 1e-6);
+  const bestScore = Math.max(regular[0]?.orderScore ?? regular[0]?.score ?? 0, 1e-6);
   function terms(docId) {
     if (!termsByDoc.has(docId)) termsByDoc.set(docId, new Set(documentTerms(index.docs[docId])));
     return termsByDoc.get(docId);
@@ -161,7 +162,7 @@ function selectDiverse(fixed, regular, index, docToArticle, limit) {
     let bestPenalty = 0;
     for (const [position, row] of regular.entries()) {
       const penalty = 0.4 * Math.max(0, ...selected.map(other => similarity(row.docId, other.docId)));
-      const merit = 0.6 * row.score / bestScore - penalty;
+      const merit = 0.6 * (row.orderScore ?? row.score) / bestScore - penalty;
       if (merit <= best) continue;
       best = merit;
       bestIndex = position;
@@ -216,17 +217,19 @@ export function createSearchService(index, { semantic = true, semanticCacheDir }
   const { articles, docToArticle } = groupArticles(index.docs);
   const interpretations = createInterpretationLookup(articles);
   const neural = semantic ? createSemanticRetriever(articles, semanticCacheDir) : null;
+  const reranker = createReranker();
   const semanticStatus = () => neural?.status() ?? {
     available: false, model: SEMANTIC_MODEL, granularity: 'article', reason: 'Semantic retrieval is disabled.', articleCount: 0,
   };
 
   return {
     interpretations,
-    status: () => ({ semantic: semanticStatus(), articleCount: articles.length, documentCount: docToArticle.size }),
+    status: () => ({ semantic: semanticStatus(), reranker: reranker.status(), articleCount: articles.length, documentCount: docToArticle.size }),
     async search(query, options = {}) {
       const {
         model = 'hybrid', topK = CONFIG.retrieval.topK, topic, feedback = {},
         excludedTerms = [], excludedPhrases = [], diversity = false, domain = null, history = [],
+        rerank = 'off', rawRecovery = true,
       } = options;
       if (typeof query !== 'string') throw new TypeError('query must be a string');
       if (!MODELS.has(model)) throw new RangeError('Unknown retrieval model');
@@ -275,11 +278,41 @@ export function createSearchService(index, { semantic = true, semanticCacheDir }
       } else if (model === 'hybrid') {
         effectiveModel = 'lexical-hybrid';
       }
-      if ((hasContext || model === 'semantic' && affinities) && raw.size) {
+      if (rawRecovery && (hasContext || model === 'semantic' && affinities) && raw.size) {
         channels.push({ origin: 'raw', model: lexicalModel, weight: 0.20, rows: scoreLexical(index, raw, lexicalModel, allowed) });
       }
 
       const { fixed, regular } = collectCandidates(channels, limit, relevant, pinned);
+      const reranking = { ...reranker.status(), policy: rerank, evaluated: 0, elapsedMs: 0 };
+      if (rerank !== 'off' && regular.length && reranking.available) {
+        const started = performance.now();
+        const semanticTop = new Set(channels.find(channel => channel.origin === 'semantic')?.rows.slice(0, 8).map(row => row.docId));
+        const agreement = lexical.slice(0, 8).filter(row => semanticTop.has(row.docId)).length;
+        const depth = rerank === 'adaptive' && agreement >= 4 ? 12 : 32;
+        const candidates = regular.slice(0, depth);
+        const context = [...entity, ...history.map(entry => entry.term)].join(' ');
+        const resolvedQuery = [query.trim(), context].filter(Boolean).join(' ').slice(0, 600);
+        const scores = await reranker.score(resolvedQuery, candidates.map(row => {
+          const doc = index.docs[row.docId];
+          return `${doc.title}. ${doc.body}`.slice(0, 1600);
+        }));
+        Object.assign(reranking, reranker.status(), { agreement, depth, elapsedMs: Math.round(performance.now() - started) });
+        if (scores) {
+          const byNeuralRank = candidates.map((row, position) => ({ row, position, logit: scores[position] }))
+            .sort((a, b) => b.logit - a.logit || a.position - b.position);
+          const byFusedRank = byNeuralRank.map(({ row, position, logit }, rank) => ({
+            row, signal: 0.4 / (20 + position + 1) + 0.6 / (20 + rank + 1),
+            explanation: { logit: round(logit), initialRank: position + fixed.length + 1, neuralRank: rank + 1 },
+          })).sort((a, b) => b.signal - a.signal || a.explanation.initialRank - b.explanation.initialRank);
+          const orderedScores = candidates.map(row => row.score);
+          for (const [position, { row, explanation }] of byFusedRank.entries()) {
+            row.reranking = explanation;
+            row.orderScore = orderedScores[position];
+          }
+          regular.splice(0, candidates.length, ...byFusedRank.map(entry => entry.row));
+          reranking.evaluated = candidates.length;
+        }
+      }
       const selected = diversity
         ? selectDiverse(fixed, regular, index, docToArticle, topK)
         : [...fixed, ...regular].slice(0, topK);
@@ -288,8 +321,10 @@ export function createSearchService(index, { semantic = true, semanticCacheDir }
         const origins = new Set(row.paths.map(item => item.origin));
         if (row.feedbackBoost || row.terms.some(item => item.sources.feedback > 0)) origins.add('feedback');
         if (row.pinned) origins.add('pinned');
+        if (row.reranking) origins.add('reranked');
         return {
-          docId, title, body, domain: docDomain, score: round(row.score), ...extractSnippet(body, weighted), origins: [...origins],
+          docId, title, body, domain: docDomain, articleTitle: docToArticle.get(docId)?.title,
+          score: round(row.score), ...extractSnippet(body, weighted), origins: [...origins],
           breakdown: {
             scoringModel: channels.length > 1 ? 'Weighted reciprocal rank fusion' : channels[0]?.model ?? lexicalModel,
             rawScore: round(row.score - row.feedbackBoost),
@@ -298,6 +333,7 @@ export function createSearchService(index, { semantic = true, semanticCacheDir }
             feedbackBoost: round(row.feedbackBoost),
             pinned: Boolean(row.pinned),
             diversityPenalty: round(row.diversityPenalty),
+            ...(row.reranking ? { reranking: row.reranking } : {}),
           },
         };
       });
@@ -307,7 +343,7 @@ export function createSearchService(index, { semantic = true, semanticCacheDir }
           rawQuery: query, model, requestedModel: model, effectiveModel, effectiveTerms: [...weighted.keys()],
           termWeights: [...weighted.values()], candidateDepth: limit,
           paths: channels.map(channel => ({ origin: channel.origin, model: channel.model, weight: channel.weight, candidates: Math.min(channel.rows.length, limit) })),
-          filters: { domain, excludedTerms, excludedPhrases, irrelevant: [...irrelevant] }, semantic: semanticStatus(), diversity,
+          filters: { domain, excludedTerms, excludedPhrases, irrelevant: [...irrelevant] }, semantic: semanticStatus(), reranking, diversity,
           returnedCount: results.length,
         },
       };

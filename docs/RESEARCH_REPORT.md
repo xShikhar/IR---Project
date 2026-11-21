@@ -6,7 +6,7 @@
 
 ## Abstract
 
-Conversational passage retrieval must interpret short follow-ups, handle changes of topic, and make evidence available for scrutiny. TurnTrace 2 extends the midterm engine with resumable topic state, inspectable query weights, a configurable ranking ensemble, and corpus-backed clarification. A React workspace supports feedback, preview, and undo. On 40 TEST turns over 35,000 passages, nDCG@10 was 0.7255 for raw BM25, 0.6366 for the frozen midterm, 0.6978 for the new lexical hybrid, and 0.6984 for the full hybrid with local article embeddings. The two new configurations returned 14.75% and 16.00% unjudged results at rank 10, respectively. All four synthetic behavior cases passed. The comparison is exploratory, and the inherited AI-derived grades await human validation.
+Conversational passage retrieval must interpret short follow-ups, handle changes of topic, and make evidence available for scrutiny. TurnTrace 2 extends the midterm engine with resumable topic state, inspectable query weights, a configurable ranking ensemble, and corpus-backed clarification. A React workspace supports feedback, preview, and undo. On 40 TEST turns over 35,000 passages, nDCG@10 was 0.7255 for raw BM25, 0.6366 for the frozen midterm, 0.6978 for the new lexical hybrid, and 0.6984 for the full hybrid with local article embeddings. The two new configurations returned 14.75% and 16.00% unjudged results at rank 10, respectively. Fixed-depth reranking achieved 0.7443 nDCG@10, while an adaptive policy achieved 0.7269 by scoring 18.5 passages on average instead of 32. All four synthetic behavior cases passed. The comparison is exploratory, and the inherited AI-derived grades await human validation.
 
 ## 1. Introduction
 
@@ -18,7 +18,7 @@ TurnTrace 2 builds on the frozen TurnTrace midterm implementation at commit `d00
 
 1. A session model with separately resumable topics, user-selected interpretations, and topic-scoped feedback.
 2. Weighted lexical retrieval with term provenance, score evidence, optional redundancy reduction, and a workspace for comparing rankings from the same session state.
-3. A reproducible three-system comparison that exposes coverage of inherited judgments and exports new candidates for blind review.
+3. A local cross-encoder with an adjustable candidate budget, a ten-configuration evaluation with conversation-level intervals, and a blind review pool for new conversations.
 
 ## 2. Related work
 
@@ -47,7 +47,7 @@ The comparison describes the architectures. The projects use different collectio
 
 ### Corpus and index
 
-The frozen collection contains 35,000 English Wikipedia passages drawn from computing and AI, biology and medicine, history and civilization, and space and physics. Passages retain stable IDs, titles, body text, and domain. The inherited normalizer and Porter stemmer produce lexical terms. The inverted index stores document frequency, term position and zone counts, document lengths, and passage metadata. The same index supplies statistics to all three evaluated systems.
+The frozen collection contains 35,000 English Wikipedia passages drawn from computing and AI, biology and medicine, history and civilization, and space and physics. Passages retain stable IDs, titles, body text, and domain. The inherited normalizer and Porter stemmer produce lexical terms. The inverted index stores document frequency, term position and zone counts, document lengths, and passage metadata. The same index supplies corpus statistics to all evaluated systems.
 
 ### Session, retrieval, and evidence
 
@@ -62,7 +62,9 @@ React workspace
 
 The React client sends a raw query and session ID to the Node API. The workspace resolves a topic through signals in the new query and existing session topics. A topic stores entity and aspect terms, along with passage feedback. The user can also select an existing topic. Candidate interpretations come from article identities in the loaded corpus. The session records a turn after an ambiguity is resolved or the search can proceed. Preview and comparison operate on a copy of context so the user can inspect alternatives before committing a new turn.
 
-The search service weights each current term by 1.00 and each topic entity term by 0.85, adding contributions when sources overlap. Brief elaboration requests such as ?Tell me more? carry up to four aspect terms from the latest substantive turn in the active topic. Each carried term receives a weight of 0.40 and cites its source turn in the inspector. Users can remove those terms in a ranking preview. Relevant passages can contribute up to eight expansion terms with weight 0.35 each. The lexical hybrid uses weighted BM25 and cosine, with a raw-query recovery channel when context contributes. The full hybrid also uses 384-dimensional article embeddings from the cached, quantized `Xenova/all-MiniLM-L6-v2` model. It compares the query embedding with 728 article vectors and projects article affinity to passage candidates. The response includes ranked passages, query-biased excerpts, score components, and term provenance.
+The search service weights each current term by 1.00 and each topic entity term by 0.85, adding contributions when sources overlap. Brief elaboration requests such as "Tell me more" carry up to four aspect terms from the latest substantive turn in the active topic. Each carried term receives a weight of 0.40 and cites its source turn in the inspector. Users can remove those terms in a ranking preview. Relevant passages can contribute up to eight expansion terms with weight 0.35 each. The lexical hybrid uses weighted BM25 and cosine, with a raw-query recovery channel when context contributes. The full hybrid also uses 384-dimensional article embeddings from the cached, quantized `Xenova/all-MiniLM-L6-v2` model. It compares the query embedding with 728 article vectors and projects article affinity to passage candidates. The response includes ranked passages, query-biased excerpts, score components, and term provenance.
+
+**Passage reranking.** Following the two-stage approach of Nogueira and Cho [8], a pinned MS MARCO MiniLM cross-encoder scores resolved query-passage pairs. The fixed policy scores up to 32 candidates. The adaptive policy scores up to 12 candidates when at least four of the first eight lexical and semantic passages overlap, and otherwise scores up to 32. The reranked pool uses `0.4 / (20 + original_rank) + 0.6 / (20 + cross_encoder_rank)` as its ordering score. Pins retain their position ahead of the reranked candidates. The trace records agreement, candidate count, time, and each scored passage's original and cross-encoder ranks. [Pinned model](https://huggingface.co/Xenova/ms-marco-MiniLM-L-6-v2)
 
 ### Ranking functions
 
@@ -128,7 +130,21 @@ Raw BM25 led the measured nDCG@10, and the midterm led P@10. The lexical hybrid 
 
 **Behavior evaluation.** All four synthetic cases passed in the lexical configuration. The telescope topic reused its original ID after the CRISPR turn. Mercury offered the element and planet choices and ranked the chosen element first. A pinned passage led the preview, preview preserved session state, and undo removed the pin. In the elaboration case, inheriting the mirror aspect changed the BM25 ranking. Removing the term reproduced the ranking from the same configuration with aspect history disabled. This test establishes that the term affects scoring. It measures behavior on a designed scenario without providing a general estimate of retrieval gains. These checks provide evidence for the implemented interactions alongside the separate ranking measurements.
 
+**Ablation and reranking cost.** Ten configurations were evaluated on the same 40 turns. The table reports nDCG@10 and the mean number of scored passages per turn. The intervals resample the eight conversations and report the paired change relative to full hybrid.
+
+| Full hybrid configuration | nDCG@10 | Mean passages scored by cross-encoder | Paired change and 95% interval |
+| --- | --- | --- | --- |
+| Initial ranking | 0.6984 | 0.0 | Reference |
+| Fixed depth | 0.7443 | 32.0 | +0.0459 [0.0145, 0.0850] |
+| Adaptive depth | 0.7269 | 18.5 | +0.0285 [0.0036, 0.0605] |
+
+Adaptive reranking scored about 42% fewer passages than fixed reranking. Removing raw-query recovery from the lexical hybrid lowered nDCG@10 from 0.6978 to 0.6731. The single-topic variant scored 0.7065, with a paired interval spanning zero relative to the branching lexical hybrid. Disabling aspect history produced identical results on these turns. Diversity lowered measured nDCG@10 to 0.5697, with 29.25% of the top ten unjudged. The results describe this small inherited pool. Nogueira and Cho evaluated an MS MARCO and TREC-CAR setup with different candidate sets and metrics, so their reported scores serve as methodological context.
+
+**Independent review.** A separate set of 20 questions across five authored conversations yielded 742 unique turn-passage pairs from the top 20 results of five systems. Reviewers receive the query, its conversation history, and the candidate passage. System and rank are withheld. This pool currently contains zero adjudicated grades, so it has no measured ranking results.
+
 ## 7. Limitations and next validation
+
+TurnTrace 2 extends a single-topic baseline with resumable topic branches, clarification and inspectable retrieval. The ablation supports retaining raw-query recovery and shows a quality-cost trade-off between the two passage reranking policies. The multi-topic workflows and ranking controls were verified separately from the relevance benchmark.
 
 - The corpus covers four subject areas and the TEST split contains eight dialogues. The result estimates performance on this curated collection and split.
 - We inspected TEST rankings while diagnosing false topic switches and reran the comparison after correcting topic routing. The reported results are exploratory. A separate, untouched conversational collection is needed to assess generalization.
@@ -146,3 +162,5 @@ Raw BM25 led the measured nDCG@10, and the midterm led P@10. The lexical hybrid 
 5. Voskarides, N., Li, D., Ren, P., Kanoulas, E., and de Rijke, M. (2020). *Query Resolution for Conversational Search with Limited Supervision.* SIGIR, 921–930. [Paper](https://arxiv.org/abs/2005.11723)
 6. Aliannejadi, M., Zamani, H., Crestani, F., and Croft, W. B. (2019). *Asking Clarifying Questions in Open-Domain Information-Seeking Conversations.* SIGIR, 475–484. [Paper](https://arxiv.org/abs/1907.06554)
 7. Buckley, C., and Voorhees, E. M. (2004). *Retrieval Evaluation with Incomplete Information.* SIGIR, 25–32. [NIST publication](https://www.nist.gov/publications/retrieval-evaluation-incomplete-information)
+
+8. Nogueira, R. and Cho, K., 2019. Passage Re-ranking with BERT. arXiv preprint arXiv:1901.04085. [Paper](https://arxiv.org/abs/1901.04085)

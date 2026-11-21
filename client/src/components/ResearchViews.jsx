@@ -1,12 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { Empty, Icon, label, numeric, Status } from '../ui.jsx';
 
-function RankingList({ title, icon, results, accent }) {
+function RankingList({ title, icon, results, accent, context = [] }) {
   return (
     <section className={`ranking-list ${accent ? 'accent' : ''}`}>
       <div className="ranking-header"><span className="empty-icon"><Icon name={icon} size={21} /></span>
         <div><h2>{title}</h2><p>{results.length} passages</p></div>
       </div>
+      {context.length > 0 && <dl className="comparison-context">{context.map(([name, value]) => (
+        <React.Fragment key={name}><dt>{name}</dt><dd>{value}</dd></React.Fragment>
+      ))}</dl>}
       {results.length > 0 ? (
         <ol>
           {results.map((result, index) => (
@@ -58,6 +61,8 @@ export function CompareView({ preset, comparison, busy, onCompare }) {
   const baseline = comparison?.baseline?.results ?? [];
   const final = comparison?.final?.results ?? [];
   const subjects = comparison?.subjects ?? [];
+  const baselineTrace = comparison?.baseline?.trace;
+  const finalTrace = comparison?.final?.trace;
   const hasResults = mode === 'subjects' ? subjects.length > 0 : Boolean(comparison?.baseline && comparison?.final);
 
   return (
@@ -90,9 +95,22 @@ export function CompareView({ preset, comparison, busy, onCompare }) {
       {!busy && !hasResults && <Empty icon="compare" title="No comparison selected"><p>Run a comparison to see both sets of ranked passages here.</p></Empty>}
       {!busy && hasResults && mode === 'ranking' && <>
         {comparison.query && <p className="comparison-query">Rankings for <strong>{comparison.query}</strong></p>}
+        {comparison.replay && <p className="comparison-query">
+          {comparison.replay.turnId
+            ? `Replayed turn ${comparison.replay.priorTurnCount + 1}`
+            : 'Compared a new question'}
+          {' · '}{comparison.replay.priorTurnCount} earlier {comparison.replay.priorTurnCount === 1 ? 'turn' : 'turns'} supplied to both engines
+        </p>}
         <div className="comparison-grid">
-          <RankingList title="Midterm baseline" icon="clock" results={baseline} />
-          <RankingList title="TurnTrace 2" icon="trace" accent results={final} />
+          <RankingList title="Midterm baseline" icon="clock" results={baseline} context={[
+            ['Topic decision', label(baselineTrace?.shiftDecision?.decision)],
+            ['Rewritten query', baselineTrace?.rewriter?.rewrittenQuery],
+          ].filter(([, value]) => value)} />
+          <RankingList title="TurnTrace 2" icon="trace" accent results={final} context={[
+            ['Topic decision', label(finalTrace?.decision?.action)],
+            ['Active topic', finalTrace?.decision?.topicTitle],
+            ['Weighted terms', finalTrace?.termWeights?.slice(0, 12).map(item => `${item.term} × ${numeric(item.weight, 2)}`).join(', ')],
+          ].filter(([, value]) => value)} />
         </div>
         <RankChanges baseline={baseline} final={final} />
       </>}
@@ -141,6 +159,35 @@ function EvaluationChart({ systems }) {
 
 const count = value => Number.isFinite(value) ? value.toLocaleString() : '—';
 
+function AblationTable({ report }) {
+  return (
+    <section className="report-card">
+      <h2>How each retrieval change performed</h2>
+      <p>{report.turnCount} identical turns per system. The table uses inherited judgments. Reranking cost is averaged over all turns, including those that scored zero passages.</p>
+      <div className="data-table-wrap">
+        <table className="data-table">
+          <thead><tr><th>Configuration</th><th>nDCG@10</th><th>Δ nDCG and 95% interval</th><th>Known recall@20</th><th>Unjudged@10</th><th>Passages reranked</th><th>Reranking ms</th></tr></thead>
+          <tbody>{report.systems.map(system => {
+            const cost = report.costs?.[system.id];
+            const interval = report.ndcg10Intervals?.[system.id];
+            const reference = report.systems.find(entry => entry.id === interval?.reference)?.label;
+            return <tr key={system.id}>
+              <th scope="row">{system.label}</th><td>{numeric(system.metrics.ndcg10, 4)}</td>
+              <td>{interval?.conversations ? <>
+                {numeric(interval.delta, 4)} [{numeric(interval.ciLower, 4)}, {numeric(interval.ciUpper, 4)}]
+                <br /><small>vs. {reference}</small>
+              </> : '—'}</td>
+              <td>{numeric(system.metrics.knownRecall20, 4)}</td><td>{numeric(system.metrics.unjudged10, 4)}</td>
+              <td>{cost ? numeric(cost.meanCandidates, 1) : '—'}</td><td>{cost ? numeric(cost.meanRerankingMs, 0) : '—'}</td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>
+      <a className="button compact" href="/api/v3/evaluation/ablation/per_turn.csv" download><Icon name="download" size={15} /> Download per-turn ablation results</a>
+    </section>
+  );
+}
+
 export function ExperimentsView({ evaluation, error, onReload }) {
   const report = evaluation?.summary && typeof evaluation.summary === 'object' ? evaluation.summary : evaluation;
   const systems = Array.isArray(report?.systems) ? report.systems : [];
@@ -168,6 +215,13 @@ export function ExperimentsView({ evaluation, error, onReload }) {
               <div key={title}><span>{title}</span><strong>{typeof value === 'number' ? count(value) : value}</strong></div>)}
           </div>
           {systems.some(system => metricDefinitions.some(([key]) => Number.isFinite(system.metrics?.[key]))) && <EvaluationChart systems={systems} />}
+          {report.ablation?.systems?.length > 0 && <AblationTable report={report.ablation} />}
+          {report.review && <section className="report-card">
+            <h2>Independent relevance review</h2>
+            <p>{report.review.turnCount} new questions across {report.review.conversationCount} conversations. {report.review.judgedPairs} of {report.review.pooledPairs} pooled passages have adjudicated grades.</p>
+            {report.review.systems?.length > 0 && <EvaluationChart systems={report.review.systems} />}
+            <a className="button compact" href="/api/v3/evaluation/review/pool.csv" download><Icon name="download" size={15} /> Download blind review pool</a>
+          </section>}
           {coverage && <section className="report-card">
             <h2>Judgment coverage</h2>
             <p>{coverage.provenance || 'Relevance judgment provenance was not included.'}

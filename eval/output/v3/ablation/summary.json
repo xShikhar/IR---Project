@@ -1,0 +1,342 @@
+{
+  "schemaVersion": 1,
+  "split": "test",
+  "semantic": {
+    "available": true,
+    "model": "Xenova/all-MiniLM-L6-v2",
+    "granularity": "article",
+    "articleCount": 728,
+    "reason": null
+  },
+  "conversationCount": 8,
+  "turnCount": 40,
+  "corpusDocumentCount": 35000,
+  "judgments": {
+    "source": "data/qrels.json",
+    "provenance": "Inherited LLM judgments",
+    "humanValidated": false,
+    "judgedTurns": 40,
+    "missingTurnIds": [],
+    "judgedPairs": 1283,
+    "turnsWithoutPositiveJudgment": 0
+  },
+  "systems": [
+    {
+      "id": "raw_bm25",
+      "label": "Raw BM25",
+      "metrics": {
+        "p5": 0.8800000000000001,
+        "p10": 0.8524999999999998,
+        "ndcg10": 0.7254949431645107,
+        "mrr20": 0.9625,
+        "knownRecall20": 0.49932259471076224,
+        "unjudged10": 0
+      },
+      "coverage": {
+        "retrievedAt10": 400,
+        "judgedAt10": 400,
+        "unjudgedAt10": 0,
+        "turnsEvaluated": 40,
+        "turnsWithResults": 40
+      }
+    },
+    {
+      "id": "midterm",
+      "label": "Midterm TurnTrace",
+      "metrics": {
+        "p5": 0.8950000000000001,
+        "p10": 0.865,
+        "ndcg10": 0.6366218958940387,
+        "mrr20": 0.9375,
+        "knownRecall20": 0.5106061825290517,
+        "unjudged10": 0.005
+      },
+      "coverage": {
+        "retrievedAt10": 400,
+        "judgedAt10": 398,
+        "unjudgedAt10": 2,
+        "turnsEvaluated": 40,
+        "turnsWithResults": 40
+      }
+    },
+    {
+      "id": "turntrace2",
+      "label": "TurnTrace 2 lexical hybrid",
+      "metrics": {
+        "p5": 0.8800000000000001,
+        "p10": 0.8125,
+        "ndcg10": 0.6977819486645103,
+        "mrr20": 0.9800000000000001,
+        "knownRecall20": 0.5340357863297698,
+        "unjudged10": 0.14750000000000002
+      },
+      "coverage": {
+        "retrievedAt10": 400,
+        "judgedAt10": 341,
+        "unjudgedAt10": 59,
+        "turnsEvaluated": 40,
+        "turnsWithResults": 40
+      }
+    },
+    {
+      "id": "turntrace2_full",
+      "label": "TurnTrace 2 full hybrid",
+      "metrics": {
+        "p5": 0.8699999999999999,
+        "p10": 0.8099999999999998,
+        "ndcg10": 0.6983936627254066,
+        "mrr20": 0.9633333333333333,
+        "knownRecall20": 0.5334146504330041,
+        "unjudged10": 0.15999999999999995
+      },
+      "coverage": {
+        "retrievedAt10": 400,
+        "judgedAt10": 336,
+        "unjudgedAt10": 64,
+        "turnsEvaluated": 40,
+        "turnsWithResults": 40
+      }
+    },
+    {
+      "id": "single_topic",
+      "label": "Lexical hybrid with one topic",
+      "metrics": {
+        "p5": 0.9099999999999999,
+        "p10": 0.8525,
+        "ndcg10": 0.7065464040109104,
+        "mrr20": 0.9800000000000001,
+        "knownRecall20": 0.5563496707972966,
+        "unjudged10": 0.145
+      },
+      "coverage": {
+        "retrievedAt10": 400,
+        "judgedAt10": 342,
+        "unjudgedAt10": 58,
+        "turnsEvaluated": 40,
+        "turnsWithResults": 40
+      }
+    },
+    {
+      "id": "no_aspects",
+      "label": "Lexical hybrid without aspect history",
+      "metrics": {
+        "p5": 0.8800000000000001,
+        "p10": 0.8125,
+        "ndcg10": 0.6977819486645103,
+        "mrr20": 0.9800000000000001,
+        "knownRecall20": 0.5340357863297698,
+        "unjudged10": 0.14750000000000002
+      },
+      "coverage": {
+        "retrievedAt10": 400,
+        "judgedAt10": 341,
+        "unjudgedAt10": 59,
+        "turnsEvaluated": 40,
+        "turnsWithResults": 40
+      }
+    },
+    {
+      "id": "no_recovery",
+      "label": "Lexical hybrid without raw recovery",
+      "metrics": {
+        "p5": 0.8600000000000001,
+        "p10": 0.7899999999999998,
+        "ndcg10": 0.6731296619233799,
+        "mrr20": 0.9375,
+        "knownRecall20": 0.5296392955286737,
+        "unjudged10": 0.16999999999999998
+      },
+      "coverage": {
+        "retrievedAt10": 400,
+        "judgedAt10": 332,
+        "unjudgedAt10": 68,
+        "turnsEvaluated": 40,
+        "turnsWithResults": 40
+      }
+    },
+    {
+      "id": "diversity",
+      "label": "Lexical hybrid with diversity",
+      "metrics": {
+        "p5": 0.7700000000000002,
+        "p10": 0.62,
+        "ndcg10": 0.5697461357072842,
+        "mrr20": 0.9875,
+        "knownRecall20": 0.4375785058791001,
+        "unjudged10": 0.2925
+      },
+      "coverage": {
+        "retrievedAt10": 400,
+        "judgedAt10": 283,
+        "unjudgedAt10": 117,
+        "turnsEvaluated": 40,
+        "turnsWithResults": 40
+      }
+    },
+    {
+      "id": "rerank_fixed",
+      "label": "Full hybrid with fixed-depth reranking",
+      "metrics": {
+        "p5": 0.9,
+        "p10": 0.8150000000000001,
+        "ndcg10": 0.7443160452744253,
+        "mrr20": 0.9708333333333332,
+        "knownRecall20": 0.5352996212563269,
+        "unjudged10": 0.16499999999999998
+      },
+      "coverage": {
+        "retrievedAt10": 400,
+        "judgedAt10": 334,
+        "unjudgedAt10": 66,
+        "turnsEvaluated": 40,
+        "turnsWithResults": 40
+      }
+    },
+    {
+      "id": "rerank_adaptive",
+      "label": "Full hybrid with adaptive reranking",
+      "metrics": {
+        "p5": 0.8949999999999999,
+        "p10": 0.8099999999999999,
+        "ndcg10": 0.726889580861483,
+        "mrr20": 0.9583333333333333,
+        "knownRecall20": 0.5432592780276317,
+        "unjudged10": 0.16499999999999998
+      },
+      "coverage": {
+        "retrievedAt10": 400,
+        "judgedAt10": 334,
+        "unjudgedAt10": 66,
+        "turnsEvaluated": 40,
+        "turnsWithResults": 40
+      }
+    }
+  ],
+  "behavior": {
+    "provenance": "Synthetic behavior assertions",
+    "passed": 4,
+    "total": 4,
+    "cases": [
+      {
+        "id": "topic-return",
+        "title": "Return to the Webb telescope",
+        "passed": true
+      },
+      {
+        "id": "mercury-choice",
+        "title": "Choose an interpretation of Mercury",
+        "passed": true
+      },
+      {
+        "id": "aspect-elaboration",
+        "title": "Ask for detail about the mirror",
+        "passed": true
+      },
+      {
+        "id": "feedback-undo",
+        "title": "Preview and undo passage feedback",
+        "passed": true
+      }
+    ]
+  },
+  "ndcg10Intervals": {
+    "turntrace2_full": {
+      "reference": "turntrace2",
+      "delta": 0.0006,
+      "ciLower": -0.0356,
+      "ciUpper": 0.036,
+      "conversations": 8
+    },
+    "single_topic": {
+      "reference": "turntrace2",
+      "delta": 0.0088,
+      "ciLower": -0.0455,
+      "ciUpper": 0.0736,
+      "conversations": 8
+    },
+    "no_aspects": {
+      "reference": "turntrace2",
+      "delta": 0,
+      "ciLower": 0,
+      "ciUpper": 0,
+      "conversations": 8
+    },
+    "no_recovery": {
+      "reference": "turntrace2",
+      "delta": -0.0247,
+      "ciLower": -0.0438,
+      "ciUpper": -0.006,
+      "conversations": 8
+    },
+    "diversity": {
+      "reference": "turntrace2",
+      "delta": -0.128,
+      "ciLower": -0.1833,
+      "ciUpper": -0.0834,
+      "conversations": 8
+    },
+    "rerank_fixed": {
+      "reference": "turntrace2_full",
+      "delta": 0.0459,
+      "ciLower": 0.0145,
+      "ciUpper": 0.085,
+      "conversations": 8
+    },
+    "rerank_adaptive": {
+      "reference": "turntrace2_full",
+      "delta": 0.0285,
+      "ciLower": 0.0036,
+      "ciUpper": 0.0605,
+      "conversations": 8
+    }
+  },
+  "costs": {
+    "turntrace2": {
+      "meanCandidates": 0,
+      "meanRerankingMs": 0,
+      "meanTurnMs": 19.375
+    },
+    "turntrace2_full": {
+      "meanCandidates": 0,
+      "meanRerankingMs": 0,
+      "meanTurnMs": 78.025
+    },
+    "single_topic": {
+      "meanCandidates": 0,
+      "meanRerankingMs": 0,
+      "meanTurnMs": 20.775
+    },
+    "no_aspects": {
+      "meanCandidates": 0,
+      "meanRerankingMs": 0,
+      "meanTurnMs": 21.7
+    },
+    "no_recovery": {
+      "meanCandidates": 0,
+      "meanRerankingMs": 0,
+      "meanTurnMs": 16.275
+    },
+    "diversity": {
+      "meanCandidates": 0,
+      "meanRerankingMs": 0,
+      "meanTurnMs": 75.95
+    },
+    "rerank_fixed": {
+      "meanCandidates": 32,
+      "meanRerankingMs": 544.775,
+      "meanTurnMs": 589.45
+    },
+    "rerank_adaptive": {
+      "meanCandidates": 18.5,
+      "meanRerankingMs": 293.55,
+      "meanTurnMs": 335.25
+    }
+  },
+  "pooling": {
+    "pairs": 231
+  },
+  "artifacts": {
+    "perTurn": "per_turn.csv",
+    "unjudgedPool": "unjudged_pool.csv"
+  }
+}

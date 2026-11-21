@@ -12,6 +12,16 @@ The default run uses the inherited TEST split. For the DEV split or all inherite
 
 To add a fourth system using the full hybrid with the local semantic channel, run `npm run prepare:semantic` and then `npm run eval:v3 -- --semantic`. Its artifacts go under `eval/output/v3/semantic/`. This run requires the prepared local model and article vectors.
 
+Prepare the cross-encoder with `npm run prepare:reranker` and run `npm run eval:v3 -- --ablation` for the ten-system comparison in `eval/output/v3/ablation/`. The added configurations isolate a single active topic, aspect history, raw-query recovery, result diversity, and fixed or adaptive passage reranking. The single-topic configuration explicitly keeps the first topic active so that the rest of the lexical ranking pipeline stays comparable. Because feedback and clarification responses are user inputs, their behavior is assessed with scripted interactions alongside this automatic benchmark.
+
+The ablation reports a 95% paired bootstrap interval around the mean conversation-level nDCG@10 difference relative to the indicated reference. Turns are grouped before resampling. Reranking cost is the mean candidate count and reranking time over all turns. Timings include initialization when it occurs and depend on the hardware and execution order.
+
+## Independent relevance review
+
+Run `npm run eval:review` to generate a blind pool from 20 new utterances in five authored conversations. The pool contains the union of the top 20 passages across five systems, with system and rank withheld. Give two reviewers copies of `eval/output/v3/review/pool.csv` and the [judging rubric](judging_rubric.md). Record grades separately, compare disagreements, and reconcile them before computing metrics.
+
+Save the reconciled grades as `adjudicated.csv` using the pool's existing columns. Run `python scripts/importReview.py adjudicated.csv adjudicated.json`, then `npm run eval:review -- --judgments=adjudicated.json`. The runner rejects unknown pairs and invalid grades. The Experiments tab reports judgment coverage and displays ranking metrics once the pooled passages are fully graded.
+
 ## Protocol
 
 - All three systems receive the same raw utterances in the same order and request 20 results. Raw BM25 has no session. The frozen midterm v2 baseline and TurnTrace 2 each receive a fresh session at the start of every conversation.

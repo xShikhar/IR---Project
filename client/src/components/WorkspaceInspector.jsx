@@ -100,6 +100,11 @@ function ScoreView({ doc, onClose }) {
             <div><dt>Feedback adjustment</dt><dd>{numeric(breakdown.feedbackBoost, 5)}</dd></div>
             <div><dt>Diversity penalty</dt><dd>{numeric(breakdown.diversityPenalty, 5)}</dd></div>
             <div><dt>Pinned</dt><dd>{breakdown.pinned ? 'Yes' : 'No'}</dd></div>
+            {breakdown.reranking && <>
+              <div><dt>Rank before reranking</dt><dd>{breakdown.reranking.initialRank}</dd></div>
+              <div><dt>Cross-encoder rank</dt><dd>{breakdown.reranking.neuralRank}</dd></div>
+              <div><dt>Cross-encoder logit</dt><dd>{numeric(breakdown.reranking.logit, 3)}</dd></div>
+            </>}
           </dl>
         </Stage>
       </> : <p className="muted-note">A score breakdown is unavailable for this passage.</p>}
@@ -153,6 +158,15 @@ export default function WorkspaceInspector({ trace, semantic, doc, exclusions, d
                 <dd>{path.candidates ?? '—'}</dd></div>)}
             </dl> : <p>Ranking paths are unavailable for this turn.</p>}
             {filters?.domain && <p>Domain filter · {domainNames[filters.domain] ?? label(filters.domain)}</p>}
+            {retrieval?.reranking?.policy && retrieval.reranking.policy !== 'off' && <div>
+              <h4>Passage reranking</h4>
+              <p>{retrieval.reranking.available
+                ? `${label(retrieval.reranking.policy)} · ${retrieval.reranking.evaluated} passages scored in ${retrieval.reranking.elapsedMs} ms`
+                : retrieval.reranking.reason}</p>
+              {retrieval.reranking.policy === 'adaptive' && retrieval.reranking.depth && <p>
+                Lexical and semantic rankings shared {retrieval.reranking.agreement} of their first eight passages. Candidate depth: {retrieval.reranking.depth}.
+              </p>}
+            </div>}
             {retrieval?.requestedModel && model && retrieval.requestedModel !== model &&
               <p>{modelNames[retrieval.requestedModel] ?? label(retrieval.requestedModel)} requested · {modelNames[model] ?? label(model)} used</p>}
           </Stage>
