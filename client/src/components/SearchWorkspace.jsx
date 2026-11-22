@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import OrbitArtwork from './OrbitArtwork.jsx';
 import { domainNames, Empty, Icon, label, modelNames, numeric, Status } from '../ui.jsx';
 
 const suggestions = [
@@ -8,7 +9,7 @@ const suggestions = [
 ];
 const starterIcons = ['orbit', 'branch', 'layers', 'target', 'sparkle'];
 
-export function Welcome({ scenarios, onScenario, onOpenDemos, newTopic, disabled }) {
+export function Welcome({ composer, scenarios, onScenario, onOpenDemos, newTopic, disabled }) {
   const [showAll, setShowAll] = useState(false);
   const examples = scenarios.length ? scenarios : suggestions;
   const visible = showAll ? examples : examples.slice(0, 3);
@@ -16,6 +17,7 @@ export function Welcome({ scenarios, onScenario, onOpenDemos, newTopic, disabled
   return (
     <div className="welcome">
       <section className="hero">
+        <OrbitArtwork />
         <div className="hero-copy">
           <h1>{newTopic ? 'Start a new topic.' : <>Follow the <em>evidence.</em></>}</h1>
           <p>{newTopic
@@ -23,13 +25,13 @@ export function Welcome({ scenarios, onScenario, onOpenDemos, newTopic, disabled
             : 'Explore a topic, ask follow-up questions, and see exactly how each search finds its evidence.'}</p>
           <button type="button" className="hero-demo-link" onClick={onOpenDemos}>Explore demo lab <Icon name="arrowUpRight" size={15} /></button>
         </div>
-        <div className="atlas-planet" aria-hidden="true"><i /></div>
-      </section>
 
+      {composer}
+      </section>
       <section className="starter-section" aria-labelledby="starter-title">
         <div className="section-heading">
           <div><h2 id="starter-title">{scenarios.length ? 'Try a scenario' : 'Try a search'}</h2>
-            <p>{scenarios.length ? 'Follow a guided sequence or ask your own question below.' : 'Start with one of these questions or ask your own below.'}</p></div>
+            <p>{scenarios.length ? 'Choose a conversation to explore how the search handles each turn.' : 'Choose a question to search the corpus.'}</p></div>
           {examples.length > 3 && <button className="text-button" type="button" onClick={() => setShowAll(!showAll)}>
             {showAll ? 'Show fewer' : 'View all'} <Icon name="arrow" size={16} />
           </button>}
@@ -53,6 +55,7 @@ export function Welcome({ scenarios, onScenario, onOpenDemos, newTopic, disabled
 
 export function Composer({ input, setInput, inputRef, settings, setSettings, semantic, reranker, busy, onSubmit, onPreview, onExploreTerm, canPreview, scenario, onNextScenario, onDismissScenario }) {
   const [explorerOpen, setExplorerOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [term, setTerm] = useState('');
   function update(field, value) {
     setSettings(previous => ({ ...previous, [field]: value }));
@@ -90,7 +93,7 @@ export function Composer({ input, setInput, inputRef, settings, setSettings, sem
         <textarea
           ref={inputRef}
           aria-label="Search question"
-          placeholder="Ask a question or follow up on a topic…"
+          placeholder="What would you like to explore?"
           value={input}
           onChange={event => setInput(event.target.value)}
           rows={2}
@@ -102,7 +105,11 @@ export function Composer({ input, setInput, inputRef, settings, setSettings, sem
             }
           }}
         />
-        <div className="composer-controls">
+        <div className={`composer-controls ${settingsOpen ? 'expanded' : ''}`}>
+          <button className="mobile-settings control" type="button" aria-expanded={settingsOpen}
+            onClick={() => setSettingsOpen(open => !open)}>
+            <Icon name="sliders" size={16} /> Search settings <Icon name="down" size={13} />
+          </button>
           <label className="control">
             <Icon name="layers" size={16} />
             <span className="visually-hidden">Retrieval model</span>

@@ -514,10 +514,15 @@ export default function App() {
   const currentTrace = pending ? null : clarification?.trace ?? response?.trace;
   const showTurn = Boolean(turn || pending || clarification);
   const searchDisabled = Boolean(busy || connecting);
+  const composer = (<Composer input={input} setInput={setInput} inputRef={inputRef} settings={settings} setSettings={setSettings}
+          onExploreTerm={exploreTerm}
+          semantic={semantic} reranker={health?.semantic?.reranker} busy={searchDisabled} onSubmit={() => submit()} onPreview={() => rescore()}
+          canPreview={Boolean(turn && !clarification)} scenario={scenario} onDismissScenario={() => setScenario(null)}
+          onNextScenario={() => { setInput(scenario.turns[scenario.step]); focusInput(); }} />);
   const togglePane = name => setMobilePane(previous => previous === name ? null : name);
 
   return (
-    <div className={`workspace view-${view}`}>
+    <div className={`workspace view-${view} ${view === 'search' && !showTurn ? 'is-landing' : ''}`}>
       <Header view={view} onNavigate={navigate} health={health} isConnecting={connecting} mobilePane={mobilePane} onPane={togglePane} />
       {mobilePane && <button className="drawer-overlay" type="button" aria-label="Close open panel" onClick={() => setMobilePane(null)} />}
       <aside className={`sidebar ${mobilePane === 'topics' ? 'drawer-open' : ''}`} aria-label="Topic workspace">
@@ -545,7 +550,7 @@ export default function App() {
               feedbackDisabled={Boolean(activeDemo)} onFeedback={recordFeedback} onInspect={doc => { setDocument(doc); setMobilePane('trace'); }}
               onTrace={id => { setDocument(null); setTraceTab(id); setMobilePane('trace'); }}
               onCompare={() => { navigate('compare'); if (turn) compare(turn.query); }} />
-              : <Welcome onOpenDemos={() => navigate('demos')} scenarios={scenarios} onScenario={startScenario} newTopic={newTopic} disabled={searchDisabled} />}
+              : <Welcome composer={activeDemo ? null : composer} onOpenDemos={() => navigate('demos')} scenarios={scenarios} onScenario={startScenario} newTopic={newTopic} disabled={searchDisabled} />}
           </>}
           {view === 'demos' && <DemoLab catalog={demoCatalog} error={demoCatalogError} loading={demoLoading} onReload={loadDemos} health={health}
             busy={Boolean(busy)||connecting} active={activeDemo} onStart={startDemo} onResume={()=>setView(activeDemo.lastView||'search')}
@@ -553,11 +558,7 @@ export default function App() {
           {view === 'compare' && <CompareView key={activeDemo?demoComparisonMode:'normal'} initialMode={activeDemo?demoComparisonMode:'ranking'} preset={activeDemo?comparison?.query:comparePreset} comparison={comparison} busy={busy === 'compare'||busy==='demo-step'} onCompare={compare} loadBenchmarks={loadComparisonBenchmarks} />}
           {view === 'experiments' && <ExperimentsView evaluation={evaluation} error={evaluationError} onReload={loadEvaluation} />}
         </div>
-        {view === 'search' && !activeDemo && <Composer input={input} setInput={setInput} inputRef={inputRef} settings={settings} setSettings={setSettings}
-          onExploreTerm={exploreTerm}
-          semantic={semantic} reranker={health?.semantic?.reranker} busy={searchDisabled} onSubmit={() => submit()} onPreview={() => rescore()}
-          canPreview={Boolean(turn && !clarification)} scenario={scenario} onDismissScenario={() => setScenario(null)}
-          onNextScenario={() => { setInput(scenario.turns[scenario.step]); focusInput(); }} />}
+        {view === 'search' && showTurn && !activeDemo && composer}
       </main>
       {view === 'search' && <aside className={`inspector ${mobilePane === 'trace' ? 'drawer-open' : ''}`} aria-label="IR Execution Trace">
         <WorkspaceInspector trace={currentTrace} semantic={semantic} doc={document} exclusions={exclusions}

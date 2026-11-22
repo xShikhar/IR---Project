@@ -18,8 +18,8 @@ export function DemoLab({catalog,error,loading,onReload,health,busy,active,onSta
   const minutes=useMemo(()=>tours.reduce((sum,t)=>sum+t.minutes,0),[tours]);
   return <div className="demo-page">
     <header className="demo-hero">
-      <div><span className="eyebrow">PRESENTATION WORKSPACE</span><h1>Demo lab</h1>
-        <p>Show what makes TurnTrace different. Run real conversations, inspect the decisions, and explain the evidence behind each feature.</p></div>
+      <div><h1>Demo lab</h1>
+        <p>Choose a conversation and watch how each question changes the evidence.</p></div>
       <div className="demo-summary"><strong>{tours.length||'—'}</strong><span>guided walkthroughs</span><small>Choose a 2–3 minute tour<br/>or build your own presentation.</small></div>
     </header>
     {active&&<div className="demo-resume"><Icon name="bolt" size={20}/><span><strong>{active.index>=active.tour.steps.length?'A demo is complete':'A demo is in progress'}</strong><small>{active.tour.title}</small></span><button type="button" className="button compact" onClick={onResume}>Resume walkthrough</button></div>}

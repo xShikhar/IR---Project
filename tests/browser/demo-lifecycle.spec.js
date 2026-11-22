@@ -24,8 +24,10 @@ test('manually choosing a scripted interpretation advances once and does not dup
   await page.getByRole('button',{name:/Mercury \(element\)/}).click();
   await expect(guide(page)).toContainText('2 / 3 steps completed');
   await expect(page.getByLabel('Browse conversation turns').locator('option')).toHaveCount(1);
+  await page.getByRole('button',{name:'Toggle topic sidebar'}).click();
   await expect(page.getByRole('button',{name:'Undo last change'})).toBeDisabled();
   await expect(page.getByRole('button',{name:'Reset workspace'})).toBeDisabled();
+  await page.getByRole('button',{name:'Close topic sidebar'}).click();
   await step(page);
   await expect(guide(page).getByRole('heading',{name:'Walkthrough complete'})).toBeVisible();
   await expect(page.getByLabel('Browse conversation turns').locator('option')).toHaveCount(2);
