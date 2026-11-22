@@ -545,7 +545,7 @@ export default function App() {
               feedbackDisabled={Boolean(activeDemo)} onFeedback={recordFeedback} onInspect={doc => { setDocument(doc); setMobilePane('trace'); }}
               onTrace={id => { setDocument(null); setTraceTab(id); setMobilePane('trace'); }}
               onCompare={() => { navigate('compare'); if (turn) compare(turn.query); }} />
-              : <Welcome scenarios={scenarios} onScenario={startScenario} newTopic={newTopic} disabled={searchDisabled} />}
+              : <Welcome onOpenDemos={() => navigate('demos')} scenarios={scenarios} onScenario={startScenario} newTopic={newTopic} disabled={searchDisabled} />}
           </>}
           {view === 'demos' && <DemoLab catalog={demoCatalog} error={demoCatalogError} loading={demoLoading} onReload={loadDemos} health={health}
             busy={Boolean(busy)||connecting} active={activeDemo} onStart={startDemo} onResume={()=>setView(activeDemo.lastView||'search')}

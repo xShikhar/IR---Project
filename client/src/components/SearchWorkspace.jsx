@@ -8,7 +8,7 @@ const suggestions = [
 ];
 const starterIcons = ['orbit', 'branch', 'layers', 'target', 'sparkle'];
 
-export function Welcome({ scenarios, onScenario, newTopic, disabled }) {
+export function Welcome({ scenarios, onScenario, onOpenDemos, newTopic, disabled }) {
   const [showAll, setShowAll] = useState(false);
   const examples = scenarios.length ? scenarios : suggestions;
   const visible = showAll ? examples : examples.slice(0, 3);
@@ -17,18 +17,13 @@ export function Welcome({ scenarios, onScenario, newTopic, disabled }) {
     <div className="welcome">
       <section className="hero">
         <div className="hero-copy">
-          <span className="hero-label"><Icon name="sparkle" size={15} /> RESEARCH WORKSPACE</span>
           <h1>{newTopic ? 'Start a new topic.' : <>Follow the <em>evidence.</em></>}</h1>
           <p>{newTopic
             ? 'Ask a question to start a separate topic. You can return to other topics from the sidebar.'
             : 'Explore a topic, ask follow-up questions, and see exactly how each search finds its evidence.'}</p>
+          <button type="button" className="hero-demo-link" onClick={onOpenDemos}>Explore demo lab <Icon name="arrowUpRight" size={15} /></button>
         </div>
-        <div className="hero-art" aria-hidden="true">
-          <i className="art-ring ring-one" /><i className="art-ring ring-two" /><i className="art-ring ring-three" />
-          <i className="axis axis-horizontal" /><i className="axis axis-vertical" />
-          <i className="art-node node-one" /><i className="art-node node-two" /><i className="art-node node-three" /><i className="art-node node-four" />
-          <span className="art-center"><Icon name="trace" size={29} /></span>
-        </div>
+        <div className="atlas-planet" aria-hidden="true"><i /></div>
       </section>
 
       <section className="starter-section" aria-labelledby="starter-title">
